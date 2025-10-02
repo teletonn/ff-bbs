@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ page_title }} - Firefly BBS</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/css/styles.css') }}">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔥</text></svg>">
+</head>
+<body>
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <h1><span class="firefly">Светлячок</span> BBS</h1>
+        </div>
+        <nav class="nav-menu">
+            <ul>
+                {% for name, path in menu_items %}
+                <li>
+                    <a href="{{ path }}" class="{{ 'active' if request.url.path == path else '' }}">
+                        {{ name }}
+                    </a>
+                </li>
+                {% endfor %}
+            </ul>
+        </nav>
+    </aside>
+
+    <main class="main-content">
+        <header class="content-header">
+            <h2>{{ page_title }}</h2>
+        </header>
+        <section class="content-block">
+            {% block content %}
+                <p>Содержимое этой страницы будет добавлено в будущем.</p>
+            {% endblock %}
+        </section>
+    </main>
+</body>
+</html>
