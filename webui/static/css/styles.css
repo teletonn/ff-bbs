@@ -1,0 +1,107 @@
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap');
+
+:root {
+    --background-color: #1a1a2e;
+    --primary-color: #16213e;
+    --secondary-color: #0f3460;
+    --accent-color: #e94560;
+    --text-color: #dcdcdc;
+    --glass-bg: rgba(22, 33, 62, 0.55);
+    --glass-border: rgba(255, 255, 255, 0.1);
+    --blur-intensity: 10px;
+    --border-radius: 15px;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Roboto', sans-serif;
+    background-color: var(--background-color);
+    color: var(--text-color);
+    background-image: linear-gradient(135deg, var(--primary-color) 0%, var(--background-color) 100%);
+    background-attachment: fixed;
+    display: flex;
+    min-height: 100vh;
+}
+
+.sidebar {
+    width: 250px;
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--blur-intensity));
+    -webkit-backdrop-filter: blur(var(--blur-intensity));
+    border-right: 1px solid var(--glass-border);
+    padding: 20px;
+    height: 100vh;
+    position: fixed;
+    display: flex;
+    flex-direction: column;
+}
+
+.sidebar-header {
+    margin-bottom: 40px;
+    text-align: center;
+}
+
+.sidebar-header h1 {
+    font-size: 1.8em;
+    color: #fff;
+    font-weight: 700;
+}
+
+.sidebar-header h1 .firefly {
+    color: var(--accent-color);
+}
+
+.nav-menu ul {
+    list-style: none;
+}
+
+.nav-menu li {
+    margin-bottom: 10px;
+}
+
+.nav-menu a {
+    display: block;
+    padding: 12px 15px;
+    color: var(--text-color);
+    text-decoration: none;
+    border-radius: 8px;
+    transition: background-color 0.3s, color 0.3s;
+    font-weight: 500;
+}
+
+.nav-menu a:hover, .nav-menu a.active {
+    background-color: var(--accent-color);
+    color: #fff;
+}
+
+.main-content {
+    margin-left: 250px;
+    flex-grow: 1;
+    padding: 30px;
+}
+
+.content-header h2 {
+    font-size: 2em;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 20px;
+}
+
+.content-block {
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--blur-intensity));
+    -webkit-backdrop-filter: blur(var(--blur-intensity));
+    border: 1px solid var(--glass-border);
+    border-radius: var(--border-radius);
+    padding: 25px;
+    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+}
+
+.content-block p {
+    line-height: 1.6;
+}
