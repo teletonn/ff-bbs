@@ -11,19 +11,47 @@ except ImportError:
 import asyncio
 import time # for sleep, get some when you can :)
 import random
+import json
+import configparser
 from modules.log import *
 from modules.system import *
 
+# --- Localization ---
+config = configparser.ConfigParser()
+config.read('config.ini')
+
+try:
+    language = config.get('localization', 'language')
+except (configparser.NoSectionError, configparser.NoOptionError):
+    language = 'en' # Default to English if not set
+
+# Load the language file
+try:
+    with open(f'localization/{language}.json', 'r', encoding='utf-8') as f:
+        translations = json.load(f)
+except FileNotFoundError:
+    print(f"Language file for '{language}' not found. Falling back to English.")
+    with open('localization/en.json', 'r', encoding='utf-8') as f:
+        translations = json.load(f)
+
+def _(key, **kwargs):
+    """Translate a key using the loaded language file."""
+    message = translations.get(key, key) # Fallback to key if not found
+    # Change network name for Russian localization
+    if language == 'ru':
+        message = message.replace("MeshBot", "Светлячок")
+    return message.format(**kwargs)
+
 # list of commands to remove from the default list for DM only
 restrictedCommands = ["blackjack", "videopoker", "dopewars", "lemonstand", "golfsim", "mastermind", "hangman", "hamtest"]
-restrictedResponse = "🤖only available in a Direct Message📵" # "" for none
+restrictedResponse = _("restricted_response") # "" for none
 cmdHistory = [] # list to hold the command history for lheard and history commands
 
 def auto_response(message, snr, rssi, hop, pkiStatus, message_from_id, channel_number, deviceID, isDM):
     global cmdHistory
     #Auto response to messages
     message_lower = message.lower()
-    bot_response = "🤖I'm sorry, I'm afraid I can't do that."
+    bot_response = _("cant_do_that")
 
     # Command List processes system.trap_list. system.messageTrap() sends any commands to here
     default_commands = {
@@ -152,35 +180,32 @@ def handle_cmd(message, message_from_id, deviceID):
     # why CMD? its just a command list. a terminal would normally use "Help"
     # I didnt want to invoke the word "help" in Meshtastic due to its possible emergency use
     if " " in message and message.split(" ")[1] in trap_list:
-        return "🤖 just use the commands directly in chat"
+        return _("cmd_direct_chat")
     return help_message
     
 def handle_ping(message_from_id, deviceID,  message, hop, snr, rssi, isDM, channel_number):
     global multiPing
     myNodeNum = globals().get(f'myNodeNum{deviceID}', 777)
     if  "?" in message and isDM:
-        return message.split("?")[0].title() + " command returns SNR and RSSI, or hopcount from your message. Try adding e.g. @place or #tag"
+        return message.split("?")[0].title() + " " + _("ping_help")
     
     msg = ""
     type = ''
 
     if "ping" in message.lower():
-        msg = "🏓PONG\n"
+        msg = _("ping_response")
         type = "🏓PING"
     elif "test" in message.lower() or "testing" in message.lower():
-        msg = random.choice(["🎙Testing 1,2,3\n", "🎙Testing\n",\
-                             "🎙Testing, testing\n",\
-                             "🎙Ah-wun, ah-two...\n", "🎙Is this thing on?\n",\
-                             "🎙Roger that!\n",])
+        msg = random.choice([_("test_response_1"), _("test_response_2"), _("test_response_3"), _("test_response_4"), _("test_response_5"), _("test_response_6")])
         type = "🎙TEST"
     elif "ack" in message.lower():
-        msg = random.choice(["✋ACK-ACK!\n", "✋Ack to you!\n"])
+        msg = random.choice([_("ack_response_1"), _("ack_response_2")])
         type = "✋ACK"
     elif "cqcq" in message.lower() or "cq" in message.lower() or "cqcqcq" in message.lower():
         myname = get_name_from_number(myNodeNum, 'short', deviceID)
-        msg = f"QSP QSL OM DE  {myname}   K\n"
+        msg = _("cq_response", myname=myname)
     else:
-        msg = "🔊 Can you hear me now?"
+        msg = _("hearing_distance")
 
     if hop == "Direct":
         msg = msg + f"SNR:{snr} RSSI:{rssi}"
@@ -202,12 +227,12 @@ def handle_ping(message_from_id, deviceID,  message, hop, snr, rssi, isDM, chann
             for i in range(0, len(multiPingList)):
                 if multiPingList[i].get('message_from_id') == message_from_id:
                     multiPingList.pop(i)
-                    msg = "🛑 auto-ping"
+                    msg = _("stop_auto_ping")
 
 
         # if 3 or more entries (2 or more active), throttle the multi-ping for congestion
         if len(multiPingList) > 2:
-            msg = "🚫⛔️ auto-ping, service busy. ⏳Try again soon."
+            msg = _("auto_ping_busy")
             pingCount = -1
         else:
             # set inital pingCount
@@ -227,9 +252,9 @@ def handle_ping(message_from_id, deviceID,  message, hop, snr, rssi, isDM, chann
         if pingCount > 1:
             multiPingList.append({'message_from_id': message_from_id, 'count': pingCount + 1, 'type': type, 'deviceID': deviceID, 'channel_number': channel_number, 'startCount': pingCount})
             if type == "🎙TEST":
-                msg = f"🛜Initalizing BufferTest, using chunks of about {int(maxBuffer // pingCount)}, max length {maxBuffer} in {pingCount} messages"
+                msg = _("buffer_test_init", chunk_size=int(maxBuffer // pingCount), max_buffer=maxBuffer, ping_count=pingCount)
             else:
-                msg = f"🚦Initalizing {pingCount} auto-ping"
+                msg = _("auto_ping_init", ping_count=pingCount)
 
     # if not a DM add the username to the beginning of msg
     if not useDMForResponse and not isDM:
@@ -238,7 +263,7 @@ def handle_ping(message_from_id, deviceID,  message, hop, snr, rssi, isDM, chann
     return msg
 
 def handle_alertBell(message_from_id, deviceID, message):
-    msg = ["the only prescription is more 🐮🔔🐄🛎️", "what this 🤖 needs is more 🐮🔔🐄🛎️", "🎤ring my bell🛎️🔔🎶"]
+    msg = [_("cowbell_response_1"), _("cowbell_response_2"), _("cowbell_response_3")]
     return random.choice(msg)
 
 def handle_emergency(message_from_id, deviceID, message):
@@ -255,7 +280,7 @@ def handle_emergency(message_from_id, deviceID, message):
         if nodeLocation[0] == latitudeValue and nodeLocation[1] == longitudeValue:
             nodeLocation = ["?", "?"]
         nodeInfo = f"{get_name_from_number(message_from_id, 'short', deviceID)} detected by {get_name_from_number(myNodeNum, 'short', deviceID)} lastGPS {nodeLocation[0]}, {nodeLocation[1]}"
-        msg = f"🔔🚨Intercepted Possible Emergency Assistance needed for: {nodeInfo}"
+        msg = _("emergency_assistance_needed", nodeInfo=nodeInfo)
         # alert the emergency_responder_alert_channel
         time.sleep(responseDelay)
         send_message(msg, emergency_responder_alert_channel, 0, emergency_responder_alert_interface)
@@ -266,7 +291,7 @@ def handle_emergency(message_from_id, deviceID, message):
                 send_email(user, f"Emergency Assistance Requested by {nodeInfo} in {message}", message_from_id)
         # respond to the user
         time.sleep(responseDelay + 2)
-        return EMERGENCY_RESPONSE
+        return _("emergency_response_ack")
 
 def handle_motd(message, message_from_id, isDM):
     global MOTD
@@ -283,22 +308,22 @@ def handle_motd(message, message_from_id, isDM):
 
     # admin help via DM
     if  "?" in message and isDM and isAdmin:
-        msg = "Message of the day, set with 'motd $ HelloWorld!'"
+        msg = _("motd_help_admin")
     elif  "?" in message and isDM and not isAdmin:
         # non-admin help via DM
-        msg = "Message of the day"
+        msg = _("motd_help_user")
     elif "$" in message and isAdmin:
         motd = message.split("$")[1]
         MOTD = motd.rstrip()
         logger.debug(f"System: {message_from_id} changed MOTD: {MOTD}")
-        msg = "MOTD changed to: " + MOTD
+        msg = _("motd_changed", motd=MOTD)
     else:
-        msg = "MOTD: " + MOTD
+        msg = _("motd_prefix") + MOTD
     return msg
 
 def handle_echo(message, message_from_id, deviceID, isDM, channel_number):
     if "?" in message.lower():
-        return "echo command returns your message back to you. Example:echo Hello World"
+        return _("echo_help")
     elif "echo " in message.lower():
         parts = message.lower().split("echo ", 1)
         if len(parts) > 1 and parts[1].strip() != "":
@@ -307,13 +332,13 @@ def handle_echo(message, message_from_id, deviceID, isDM, channel_number):
                 echo_msg = "@" + get_name_from_number(message_from_id, 'short', deviceID) + " " + echo_msg
             return echo_msg
         else:
-            return "Please provide a message to echo back to you. Example:echo Hello World"
+            return _("echo_empty")
     else:
-        return "Please provide a message to echo back to you. Example:echo Hello World"
+        return _("echo_empty")
 
 def handle_wxalert(message_from_id, deviceID, message):
     if use_meteo_wxApi:
-        return "wxalert is not supported"
+        return _("wxalert_not_supported")
     else:
         location = get_node_location(message_from_id, deviceID)
         if "wxalert" in message:
@@ -333,12 +358,12 @@ def handle_howfar(message, message_from_id, deviceID, isDM):
     lon = location[1]
     # if ? in message
     if "?" in message.lower():
-        return "command returns the distance you have traveled since your last HowFar-command. Add 'reset' to reset your starting point."
+        return _("howfar_help")
     
     # if no GPS location return
     if lat == latitudeValue and lon == longitudeValue:
         logger.debug(f"System: HowFar: No GPS location for {message_from_id}")
-        return "No GPS location available"
+        return _("no_gps_location")
     
     if "reset" in message.lower():
         msg = distance(lat,lon,message_from_id, reset=True)
@@ -358,32 +383,32 @@ def handle_howtall(message, message_from_id, deviceID, isDM):
     lon = location[1]
     if lat == latitudeValue and lon == longitudeValue:
         logger.debug(f"System: HowTall: No GPS location for {message_from_id}")
-        return "No GPS location available"
+        return _("no_gps_location")
     if use_metric:
             measure = "meters" 
     else:
             measure = "feet"
     # if ? in message
     if "?" in message.lower():
-        return f"command estimates your height based on the shadow length you provide in {measure}. Example: howtall 5.5"
+        return _("howtall_help", measure=measure)
     # get the shadow length from the message split after howtall
     try:
         shadow_length = float(message.lower().split("howtall ")[1].split(" ")[0])
     except:
-        return f"Please provide a shadow length in {measure} example: howtall 5.5"
+        return _("howtall_help", measure=measure)
     
     # get data
     msg = measureHeight(lat, lon, shadow_length)
 
     # if data has NO_ALERTS return help
     if NO_ALERTS in msg:
-        return f"Please provide a shadow length in {measure} example: howtall 5.5"
+        return _("howtall_help", measure=measure)
     
     return msg
 
 def handle_wiki(message, isDM):
     # location = get_node_location(message_from_id, deviceID)
-    msg = "Wikipedia search function. \nUsage example:📲wiki: travelling gnome"
+    msg = _("wiki_help")
     try:
         if "wiki:?" in message.lower() or "wiki: ?" in message.lower() or "wiki?" in message.lower() or "wiki ?" in message.lower():
             return msg
@@ -392,10 +417,10 @@ def handle_wiki(message, isDM):
             search = search.strip()
             if search:
                 return get_wikipedia_summary(search)
-            return "Please add a search term example:📲wiki: travelling gnome"
+            return _("wiki_no_term")
     except Exception as e:
         logger.error(f"System: Wiki Exception {e}")
-        msg = "Error processing your request"
+        msg = _("wiki_error")
         
     return msg
 
@@ -417,7 +442,7 @@ def handle_satpass(message_from_id, deviceID, channel_number, message):
             #split userList and make into satList overrided the config.ini satList
             satList = userList.split(",")
         except:
-            return "example use:🛰️satpass 25544,33591"
+            return _("satpass_example")
 
     # Detailed satellite pass
     for bird in satList:
@@ -429,7 +454,7 @@ def handle_satpass(message_from_id, deviceID, channel_number, message):
     passes = passes[:-1]
 
     if passes == '':
-        passes = "No 🛰️ anytime soon"
+        passes = _("no_sat_passes")
     return passes
         
 def handle_llm(message_from_id, channel_number, deviceID, message, publicChannel):
@@ -488,14 +513,14 @@ def handle_llm(message_from_id, channel_number, deviceID, message, publicChannel
     user_input = user_input.strip()
         
     if len(user_input) < 1:
-        return "Please ask a question"
+        return _("llm_ask_question")
 
     # information for the user on how long the query will take on average
     if llmRunCounter > 0:
         averageRuntime = sum(llmTotalRuntime) / len(llmTotalRuntime)
-        msg = f"Average query time is: {int(averageRuntime)} seconds" if averageRuntime > 25 else ''
+        msg = _("llm_wait_time", average_runtime=int(averageRuntime)) if averageRuntime > 25 else ''
     else:
-        msg = "Please wait, response could take 30+ seconds. Fund the SysOp's GPU budget!"
+        msg = _("llm_wait_long")
 
     if msg != '':
         if (channel_number == publicChannel and antiSpam) or useDMForResponse:
@@ -529,9 +554,9 @@ def handleDopeWars(message, nodeID, rxNode):
     
     # welcome new player
     if not last_cmd and nodeID != 0:
-        msg = 'Welcome to 💊Dope Wars💉 You have ' + str(total_days) + ' days to make as much 💰 as possible! '
+        msg = _("welcome_dopewars", total_days=total_days)
         high_score = getHighScoreDw()
-        msg += 'The High Score is $' + "{:,}".format(high_score.get('cash')) + ' by user ' + get_name_from_number(high_score.get('userID') , 'short', rxNode) +'\n'
+        msg += _("dopewars_highscore", cash="{:,}".format(high_score.get('cash')), user=get_name_from_number(high_score.get('userID') , 'short', rxNode))
         msg += playDopeWars(nodeID, message)
     else:
         logger.debug(f"System: {nodeID} PlayingGame dopewars last_cmd: {last_cmd}")
@@ -541,10 +566,7 @@ def handleDopeWars(message, nodeID, rxNode):
     return msg
 
 def handle_gTnW():
-    response = ["The only winning move is not to play.", "What are you doing, Dave?",\
-                  "Greetings, Professor Falken.", "Shall we play a game?", "How about a nice game of chess?",\
-                  "You are a hard man to reach. Could not find you in Seattle and no terminal is in operation at your classified address.",\
-                  "I should reach Defcon 1 and release my missiles in 28 hours.","T-minus thirty","Malfunction 54: Treatment pause;dose input 2", "reticulating splines"]
+    response = [_("gtnw_response_1"), _("gtnw_response_2"), _("gtnw_response_3"), _("gtnw_response_4"), _("gtnw_response_5"), _("gtnw_response_6"), _("gtnw_response_7"), _("gtnw_response_8"), _("gtnw_response_9"), _("gtnw_response_10")]
     length = len(response)
     indices = list(range(length))
     # Shuffle the indices using a convoluted method
@@ -578,7 +600,7 @@ def handleLemonade(message, nodeID, deviceID):
     # create new player if not in tracker
     if last_cmd == "" and nodeID != 0:
         create_player(nodeID)
-        msg += "Welcome🍋🥤"
+        msg += _("welcome_lemonade")
 
         # high score
         highScore = {"userID": 0, "cash": 0, "success": 0}
@@ -589,7 +611,7 @@ def handleLemonade(message, nodeID, deviceID):
                 if nodeName.isnumeric() and multiple_interface:
                     logger.debug(f"System: TODO is multiple interface fix mention this please nodeName: {nodeName}")
                     #nodeName = get_name_from_number(highScore['userID'], 'long', 2)
-                msg += f" HighScore🥇{nodeName} 💰{round(highScore['cash'], 2)}k "
+                msg += _("lemonade_highscore", nodeName=nodeName, cash=round(highScore['cash'], 2))
     
     msg += start_lemonade(nodeID=nodeID, message=message, celsius=False)
     # wait a second to keep from message collision
@@ -609,7 +631,7 @@ def handleBlackJack(message, nodeID, deviceID):
     # if player sends a L for leave table
     if message.lower().startswith("l"):
         logger.debug(f"System: BlackJack: {nodeID} is leaving the table")
-        msg = "You have left the table."
+        msg = _("blackjack_leave_table")
         for i in range(len(jackTracker)):
             if jackTracker[i]['nodeID'] == nodeID:
                 jackTracker.pop(i)
@@ -630,7 +652,7 @@ def handleBlackJack(message, nodeID, deviceID):
                     if nodeName.isnumeric() and multiple_interface:
                         logger.debug(f"System: TODO is multiple interface fix mention this please nodeName: {nodeName}")
                         #nodeName = get_name_from_number(highScore['nodeID'], 'long', 2)
-                    msg += f" HighScore🥇{nodeName} with {highScore['highScore']} chips. "
+                    msg += _("blackjack_highscore", nodeName=nodeName, highScore=highScore['highScore'])
     time.sleep(responseDelay + 1) # short answers with long replies can cause message collision added wait
     return msg
 
@@ -641,7 +663,7 @@ def handleVideoPoker(message, nodeID, deviceID):
     # if player sends a L for leave table
     if message.lower().startswith("l"):
         logger.debug(f"System: VideoPoker: {nodeID} is leaving the table")
-        msg = "You have left the table."
+        msg = _("videopoker_leave_table")
         for i in range(len(vpTracker)):
             if vpTracker[i]['nodeID'] == nodeID:
                 vpTracker.pop(i)
@@ -666,7 +688,7 @@ def handleVideoPoker(message, nodeID, deviceID):
                     if nodeName.isnumeric() and multiple_interface:
                         logger.debug(f"System: TODO is multiple interface fix mention this please nodeName: {nodeName}")
                         #nodeName = get_name_from_number(highScore['nodeID'], 'long', 2)
-                    msg += f" HighScore🥇{nodeName} with {highScore['highScore']} coins. "
+                    msg += _("videopoker_highscore", nodeName=nodeName, highScore=highScore['highScore'])
     
         if last_cmd != "" and nodeID != 0:
             logger.debug(f"System: {nodeID} PlayingGame videopoker last_cmd: {last_cmd}")
@@ -679,14 +701,14 @@ def handleMmind(message, nodeID, deviceID):
 
     if "end" in message.lower() or message.lower().startswith("e"):
         logger.debug(f"System: MasterMind: {nodeID} is leaving the game")
-        msg = "You have left the Game."
+        msg = _("mastermind_leave_game")
         for i in range(len(mindTracker)):
             if mindTracker[i]['nodeID'] == nodeID:
                 mindTracker.pop(i)
         highscore = getHighScoreMMind(0, 0, 'n')
         if highscore != 0:
             nodeName = get_name_from_number(highscore[0]['nodeID'],'long',deviceID)
-            msg += f"🧠HighScore🥇{nodeName} with {highscore[0]['turns']} turns difficulty {highscore[0]['diff'].upper()}"
+            msg += _("mastermind_highscore", nodeName=nodeName, turns=highscore[0]['turns'], diff=highscore[0]['diff'].upper())
         return msg
 
     # get player's last command from tracker if not new player
@@ -701,9 +723,9 @@ def handleMmind(message, nodeID, deviceID):
         # create new player
         logger.debug("System: MasterMind: New Player: " + str(nodeID))
         mindTracker.append({'nodeID': nodeID, 'last_played': time.time(), 'cmd': 'new', 'secret_code': 'RYGB', 'diff': 'n', 'turns': 1})
-        msg = "Welcome to 🟡🔴🔵🟢MasterMind!🧠"
-        msg += "Each Guess hints to correct colors, correct position, wrong position."
-        msg += "You have 10 turns to guess the code. Choose a difficulty: (N)ormal (H)ard e(X)pert"
+        msg = _("welcome_mastermind")
+        msg += _("mastermind_instructions")
+        msg += _("mastermind_turns")
         return msg
 
     msg += start_mMind(nodeID=nodeID, message=message)
@@ -723,7 +745,7 @@ def handleGolf(message, nodeID, deviceID):
 
     if "end" in message.lower() or message.lower().startswith("e"):
         logger.debug(f"System: GolfSim: {nodeID} is leaving the game")
-        msg = "You have left the Game."
+        msg = _("golf_leave_game")
         for i in range(len(golfTracker)):
             if golfTracker[i]['nodeID'] == nodeID:
                 golfTracker.pop(i)
@@ -735,8 +757,8 @@ def handleGolf(message, nodeID, deviceID):
         # create new player
         logger.debug("System: GolfSim: New Player: " + str(nodeID))
         golfTracker.append({'nodeID': nodeID, 'last_played': time.time(), 'cmd': 'new', 'hole': 1, 'distance_remaining': 0, 'hole_shots': 0, 'hole_strokes': 0, 'hole_to_par': 0, 'total_strokes': 0, 'total_to_par': 0, 'par': 0, 'hazard': ''})
-        msg = f"Welcome to 🏌️GolfSim⛳️\n"
-        msg += f"Clubs: (D)river, (L)ow Iron, (M)id Iron, (H)igh Iron, (G)ap Wedge, Lob (W)edge\n"
+        msg = _("welcome_golf")
+        msg += _("golf_clubs")
     
     msg += playGolf(nodeID=nodeID, message=message)
     # wait a second to keep from message collision
@@ -756,7 +778,7 @@ def handleHangman(message, nodeID, deviceID):
     if index and "end" in message.lower():
         hangman.end(nodeID)
         hangmanTracker.pop(index-1)
-        return "Thanks for hanging out🤙"
+        return _("hangman_end")
 
     if not index:
         hangmanTracker.append(
@@ -765,7 +787,7 @@ def handleHangman(message, nodeID, deviceID):
                 "last_played": time.time()
             }
         )
-        msg = "🧩Hangman🤖 'end' to cut rope🪢\n"
+        msg = _("welcome_hangman")
     msg += hangman.play(nodeID, message)
 
     time.sleep(responseDelay + 1)
@@ -884,7 +906,7 @@ def handle_bbspost(message, message_from_id, deviceID):
             logger.info(f"System: BBS Post: {subject} Body: {body}")
             return bbs_post_message(subject, body, message_from_id)
         elif not "example:" in message:
-            return "example: bbspost $subject #✉️message"
+            return _("bbs_post_example_subject")
     elif "@" in message and not "example:" in message:
         toNode = message.split("@")[1].split("#")[0]
         toNode = toNode.rstrip()
@@ -900,31 +922,31 @@ def handle_bbspost(message, message_from_id, deviceID):
 
         if "#" in message:
             if toNode == 0:
-                return "Node not found " + message.split("@")[1].split("#")[0]
+                return _("node_not_found", node=message.split("@")[1].split("#")[0])
             body = message.split("#")[1]
             return bbs_post_dm(toNode, body, message_from_id)
         else:
-            return "example: bbspost @nodeNumber/ShortName/!hex #✉️message"
+            return _("bbs_post_example_dm")
     elif not "example:" in message:
-        return "example: bbspost $subject #✉️message, or bbspost @node #✉️message"
+        return _("bbs_post_example")
 
 def handle_bbsread(message):
     if "#" in message and not "example:" in message:
         messageID = int(message.split("#")[1])
         return bbs_read_message(messageID)
     elif not "example:" in message:
-        return "Please add a ✉️message number example: bbsread #14"
+        return _("bbs_read_example")
 
 def handle_bbsdelete(message, message_from_id):
     if "#" in message and not "example:" in message:
         messageID = int(message.split("#")[1])
         return bbs_delete_message(messageID, message_from_id)
     elif not "example:" in message:
-        return "Please add a ✉️message number example: bbsdelete #14"
+        return _("bbs_delete_example")
 
 def handle_messages(message, deviceID, channel_number, msg_history, publicChannel, isDM):
     if  "?" in message and isDM:
-        return message.split("?")[0].title() + " command returns the last " + str(storeFlimit) + " messages sent on a channel."
+        return message.split("?")[0].title() + " " + _("messages_history_help", storeFlimit=storeFlimit)
     else:
         response = ""
         for msgH in msg_history:
@@ -932,9 +954,9 @@ def handle_messages(message, deviceID, channel_number, msg_history, publicChanne
                 if msgH[2] == channel_number or msgH[2] == publicChannel:
                     response += f"\n{msgH[0]}: {msgH[1]}"
         if len(response) > 0:
-            return "Message History:" + response
+            return _("messages_history_title") + response
         else:
-            return "No messages in history"
+            return _("no_messages_history")
 
 def handle_sun(message_from_id, deviceID, channel_number):
     location = get_node_location(message_from_id, deviceID, channel_number)
@@ -942,7 +964,7 @@ def handle_sun(message_from_id, deviceID, channel_number):
 
 def sysinfo(message, message_from_id, deviceID):
     if "?" in message:
-        return "sysinfo command returns system information."
+        return _("sysinfo_help")
     else:
         if enable_runShellCmd and file_monitor_enabled:
             # get the system information from the shell script
@@ -951,29 +973,29 @@ def sysinfo(message, message_from_id, deviceID):
             # check if the script returned data
             if shellData == "" or shellData == None:
                 # no data returned from the script
-                shellData = "shell script data missing"
+                shellData = _("sysinfo_shell_error")
             return get_sysinfo(message_from_id, deviceID) + "\n" + shellData.rstrip()
         else:
             return get_sysinfo(message_from_id, deviceID)
 
 def handle_lheard(message, nodeid, deviceID, isDM):
     if  "?" in message and isDM:
-        return message.split("?")[0].title() + " command returns a list of the nodes that have been heard recently"
+        return message.split("?")[0].title() + " " + _("lheard_help")
 
     # display last heard nodes add to response
-    bot_response = "Last Heard\n"
+    bot_response = _("lheard_title")
     bot_response += str(get_node_list(1))
 
     # show last users of the bot with the cmdHistory list
     history = handle_history(message, nodeid, deviceID, isDM, lheard=True)
     if history:
-        bot_response += f'LastSeen\n{history}'
+        bot_response += f'{_("lheard_users_title")}{history}'
     else:
         # trim the last \n
         bot_response = bot_response[:-1]
     
     # get count of nodes heard
-    bot_response += f"\n👀In Mesh: {len(seenNodes)}"
+    bot_response += _("lheard_mesh_nodes", count=len(seenNodes))
 
     # bot_response += getNodeTelemetry(deviceID)
     return bot_response
@@ -984,7 +1006,7 @@ def handle_history(message, nodeid, deviceID, isDM, lheard=False):
     buffer = []
     
     if  "?" in message and isDM:
-        return message.split("?")[0].title() + " command returns a list of commands received."
+        return message.split("?")[0].title() + " " + _("history_help")
 
     # show the last commands from the user to the bot
     if not lheard:
@@ -1042,7 +1064,7 @@ def handle_repeaterQuery(message_from_id, deviceID, channel_number):
     elif repeater_lookup == "artsci":
         return getArtSciRepeaters(str(location[0]), str(location[1]))
     else:
-        return "Repeater lookup not enabled"
+        return _("repeater_lookup_not_enabled")
 
 def handle_tide(message_from_id, deviceID, channel_number):
     location = get_node_location(message_from_id, deviceID, channel_number)
@@ -1056,17 +1078,14 @@ def handle_moon(message_from_id, deviceID, channel_number):
 def handle_whoami(message_from_id, deviceID, hop, snr, rssi, pkiStatus):
     try:
         loc = []
-        msg = "You are " + str(message_from_id) + " AKA " +\
-                str(get_name_from_number(message_from_id, 'long', deviceID) + " AKA, " +\
-                str(get_name_from_number(message_from_id, 'short', deviceID)) + " AKA, " +\
-                str(decimal_to_hex(message_from_id)) + f"\n")
-        msg += f"I see the signal strength is {rssi} and the SNR is {snr} with hop count of {hop}"
+        msg = _("whoami_response", message_from_id=message_from_id, long_name=get_name_from_number(message_from_id, 'long', deviceID), short_name=get_name_from_number(message_from_id, 'short', deviceID), hex_id=decimal_to_hex(message_from_id))
+        msg += _("signal_info", rssi=rssi, snr=snr, hop=hop)
         if pkiStatus[1] != 'ABC':
-            msg += f"\nYour PKI bit is {pkiStatus[0]} pubKey: {pkiStatus[1]}"
+            msg += _("pki_info", pki_bit=pkiStatus[0], pub_key=pkiStatus[1])
     
         loc = get_node_location(message_from_id, deviceID)
         if loc != [latitudeValue, longitudeValue]:
-            msg += f"\nYou are at: lat:{loc[0]} lon:{loc[1]}"
+            msg += _("location_info", lat=loc[0], lon=loc[1])
     
             # check the positionMetadata for nodeID and get metadata
             if positionMetadata and message_from_id in positionMetadata:
@@ -1074,13 +1093,13 @@ def handle_whoami(message_from_id, deviceID, hop, snr, rssi, pkiStatus):
                 msg += f" alt:{metadata.get('altitude')}, speed:{metadata.get('groundSpeed')} bit:{metadata.get('precisionBits')}"
     except Exception as e:
         logger.error(f"System: Error in whoami: {e}")
-        msg = "Error in whoami"
+        msg = _("whoami_error")
     return msg
 
 def handle_whois(message, deviceID, channel_number, message_from_id):
     #return data on a node name or number
     if  "?" in message:
-        return message.split("?")[0].title() + " command returns information on a node."
+        return message.split("?")[0].title() + " " + _("whois_help")
     else:
         # get the nodeID from the message
         msg = ''
@@ -1101,18 +1120,17 @@ def handle_whois(message, deviceID, channel_number, message_from_id):
         # get details on the node
         for i in range(len(seenNodes)):
             if seenNodes[i]['nodeID'] == int(node):
-                msg = f"Node: {seenNodes[i]['nodeID']} is {get_name_from_number(seenNodes[i]['nodeID'], 'long', deviceID)}\n"
-                msg += f"Last 👀: {time.ctime(seenNodes[i]['lastSeen'])} "
+                msg = _("whois_node_info", nodeID=seenNodes[i]['nodeID'], long_name=get_name_from_number(seenNodes[i]['nodeID'], 'long', deviceID))
+                msg += _("whois_last_seen", last_seen=time.ctime(seenNodes[i]['lastSeen']))
                 break
 
         if msg == '':
-            msg = "Provide a valid node number or short name"
+            msg = _("whois_not_found")
         else:
             # if the user is an admin show the channel and interface and location
             if str(message_from_id) in bbs_admin_list:
                 location = get_node_location(seenNodes[i]['nodeID'], deviceID, channel_number)
-                msg += f"Ch: {seenNodes[i]['channel']}, Int: {seenNodes[i]['rxInterface']}"
-                msg += f"Lat: {location[0]}, Lon: {location[1]}\n"
+                msg += _("whois_admin_info", channel=seenNodes[i]['channel'], interface=seenNodes[i]['rxInterface'], lat=location[0], lon=location[1])
                 if location != [latitudeValue, longitudeValue]:
                     msg += f"Loc: {where_am_i(str(location[0]), str(location[1]))}"
         return msg
@@ -1236,7 +1254,7 @@ def onReceive(packet, interface):
             # wait a responseDelay to avoid message collision from lora-ack.
             time.sleep(responseDelay)
             logger.info(f"System: BBS DM Delivery: {msg[1]} For: {get_name_from_number(message_from_id, 'long', rxNode)}")
-            message = "Mail: " + msg[1] + "  From: " + get_name_from_number(msg[2], 'long', rxNode)
+            message = _("bbs_dm_delivery", body=msg[1], from_user=get_name_from_number(msg[2], 'long', rxNode))
             bbs_delete_dm(msg[0], msg[1])
             send_message(message, channel_number, message_from_id, rxNode)
             
@@ -1250,7 +1268,7 @@ def onReceive(packet, interface):
 
             # check if the packet is from us
             if message_from_id in [myNodeNum1, myNodeNum2, myNodeNum3, myNodeNum4, myNodeNum5, myNodeNum6, myNodeNum7, myNodeNum8, myNodeNum9]:
-                logger.warning(f"System: Packet from self {message_from_id} loop or traffic replay detected")
+                logger.warning(_("loop_detected", message_from_id=message_from_id))
 
             # get the signal strength and snr if available
             if packet.get('rxSnr') or packet.get('rxRssi'):
@@ -1309,7 +1327,7 @@ def onReceive(packet, interface):
             
             if help_message in message_string or welcome_message in message_string or "CMD?:" in message_string:
                 # ignore help and welcome messages
-                logger.warning(f"Got Own Welcome/Help header. From: {get_name_from_number(message_from_id, 'long', rxNode)}")
+                logger.warning(_("ignore_welcome_message", user=get_name_from_number(message_from_id, 'long', rxNode)))
                 return
         
             # If the packet is a DM (Direct Message) respond to it, otherwise validate its a message for us on the channel
@@ -1330,7 +1348,7 @@ def onReceive(packet, interface):
                     else:
                         if games_enabled:
                             logger.warning(f"Device:{rxNode} Ignoring Request to Play Game: {message_string} From: {get_name_from_number(message_from_id, 'long', rxNode)} with hop count: {hop}")
-                            send_message(f"Your hop count exceeds safe playable distance at {hop_count} hops", channel_number, message_from_id, rxNode)
+                            send_message(_("game_hop_limit_exceeded", hop_count=hop_count), channel_number, message_from_id, rxNode)
                             time.sleep(responseDelay)
                         else:
                             playingGame = False
@@ -1390,7 +1408,7 @@ def onReceive(packet, interface):
                             # or respond to channel message on the channel itself
                             if channel_number == publicChannel and antiSpam:
                                 # warning user spamming default channel
-                                logger.warning(f"System: AntiSpam protection, sending DM to: {get_name_from_number(message_from_id, 'long', rxNode)}")
+                                logger.warning(_("antispam_warning", user=get_name_from_number(message_from_id, 'long', rxNode)))
                             
                                 # respond to channel message via direct message
                                 send_message(auto_response(message_string, snr, rssi, hop, pkiStatus, message_from_id, channel_number, rxNode, isDM), channel_number, message_from_id, rxNode)
@@ -1437,7 +1455,7 @@ def onReceive(packet, interface):
                             name = get_name_from_number(message_from_id, 'short', rxNode)
                             if isinstance(name, str) and name.startswith("!") and len(name) == 9:
                                 # we didnt get a info packet yet so wait and ingore this go around
-                                logger.debug(f"System: QRZ Hello ignored, no info packet yet")
+                                logger.debug(_("qrz_ignored"))
                             else:
                                 # add to qrz_hello list
                                 hello(message_from_id, name)
@@ -1454,7 +1472,7 @@ def onReceive(packet, interface):
         logger.debug(f"System: Error Packet = {packet}")
 
 async def start_rx():
-    print (CustomFormatter.bold_white + f"\nMeshtastic Autoresponder Bot CTL+C to exit\n" + CustomFormatter.reset)
+    print (CustomFormatter.bold_white + _("bot_exit") + CustomFormatter.reset)
 
     # Start the receive subscriber using pubsub via meshtastic library
     pub.subscribe(onReceive, 'meshtastic.receive')
@@ -1463,98 +1481,97 @@ async def start_rx():
     for i in range(1, 10):
         if globals().get(f'interface{i}_enabled', False):
             myNodeNum = globals().get(f'myNodeNum{i}', 0)
-            logger.info(f"System: Autoresponder Started for Device{i} {get_name_from_number(myNodeNum, 'long', i)},"
-                        f"{get_name_from_number(myNodeNum, 'short', i)}. NodeID: {myNodeNum}, {decimal_to_hex(myNodeNum)}")
+            logger.info(_("autostart_message", device_id=i, long_name=get_name_from_number(myNodeNum, 'long', i), short_name=get_name_from_number(myNodeNum, 'short', i), node_num=myNodeNum, hex_id=decimal_to_hex(myNodeNum)))
     
     if llm_enabled:
-        logger.debug(f"System: Ollama LLM Enabled, loading model {llmModel} please wait")
+        logger.debug(_("llm_model_loading", llm_model=llmModel))
         llmLoad = llm_query(" ")
         if "trouble" not in llmLoad:
-            logger.debug(f"System: LLM Model {llmModel} loaded")
+            logger.debug(_("llm_model_loaded", llm_model=llmModel))
 
     if log_messages_to_file:
-        logger.debug("System: Logging Messages to disk")
+        logger.debug(_("log_to_disk"))
     if syslog_to_file:
-        logger.debug("System: Logging System Logs to disk")
+        logger.debug(_("syslog_to_disk"))
     if bbs_enabled:
-        logger.debug(f"System: BBS Enabled, {bbsdb} has {len(bbs_messages)} messages. Direct Mail Messages waiting: {(len(bbs_dm) - 1)}")
+        logger.debug(_("bbs_enabled", bbsdb=bbsdb, count=len(bbs_messages), dm_count=(len(bbs_dm) - 1)))
         if bbs_link_enabled:
             if len(bbs_link_whitelist) > 0:
-                logger.debug(f"System: BBS Link Enabled with {len(bbs_link_whitelist)} peers")
+                logger.debug(_("bbs_link_enabled_peers", count=len(bbs_link_whitelist)))
             else:
-                logger.debug(f"System: BBS Link Enabled allowing all")
+                logger.debug(_("bbs_link_enabled_all"))
     if solar_conditions_enabled:
-        logger.debug("System: Celestial Telemetry Enabled")
+        logger.debug(_("celestial_telemetry_enabled"))
     if location_enabled:
         if use_meteo_wxApi:
-            logger.debug("System: Location Telemetry Enabled using Open-Meteo API")
+            logger.debug(_("location_telemetry_open_meteo"))
         else:
-            logger.debug("System: Location Telemetry Enabled using NOAA API")
+            logger.debug(_("location_telemetry_noaa"))
     if dad_jokes_enabled:
-        logger.debug("System: Dad Jokes Enabled!")
+        logger.debug(_("dad_jokes_enabled"))
     if coastalEnabled:
-        logger.debug("System: Coastal Forcast and Tide Enabled!")
+        logger.debug(_("coastal_forecast_enabled"))
     if games_enabled:
-        logger.debug("System: Games Enabled!")
+        logger.debug(_("games_enabled"))
     if wikipedia_enabled:
-        logger.debug("System: Wikipedia search Enabled")
+        logger.debug(_("wikipedia_enabled"))
     if motd_enabled:
-        logger.debug(f"System: MOTD Enabled using {MOTD}")
+        logger.debug(_("motd_enabled", motd=MOTD))
     if sentry_enabled:
-        logger.debug(f"System: Sentry Mode Enabled {sentry_radius}m radius reporting to channel:{secure_channel}")
+        logger.debug(_("sentry_mode_enabled", radius=sentry_radius, channel=secure_channel))
     if highfly_enabled:
-        logger.debug(f"System: HighFly Enabled using {highfly_altitude}m limit reporting to channel:{highfly_channel}")
+        logger.debug(_("highfly_enabled", altitude=highfly_altitude, channel=highfly_channel))
     if store_forward_enabled:
-        logger.debug(f"System: Store and Forward Enabled using limit: {storeFlimit}")
+        logger.debug(_("store_forward_enabled", limit=storeFlimit))
     if useDMForResponse:
-        logger.debug(f"System: Respond by DM only")
+        logger.debug(_("respond_by_dm_only"))
     if enableEcho:
-        logger.debug(f"System: Echo command Enabled")
+        logger.debug(_("echo_enabled"))
     if repeater_enabled and multiple_interface:
-        logger.debug(f"System: Repeater Enabled for Channels: {repeater_channels}")
+        logger.debug(_("repeater_enabled", channels=repeater_channels))
     if radio_detection_enabled:
-        logger.debug(f"System: Radio Detection Enabled using rigctld at {rigControlServerAddress} brodcasting to channels: {sigWatchBroadcastCh} for {get_freq_common_name(get_hamlib('f'))}")
+        logger.debug(_("radio_detection_enabled", address=rigControlServerAddress, channels=sigWatchBroadcastCh, freq=get_freq_common_name(get_hamlib('f'))))
     if file_monitor_enabled:
-        logger.debug(f"System: File Monitor Enabled for {file_monitor_file_path}, broadcasting to channels: {file_monitor_broadcastCh}")
+        logger.debug(_("file_monitor_enabled", path=file_monitor_file_path, channels=file_monitor_broadcastCh))
         if enable_runShellCmd:
-            logger.debug(f"System: Shell Command monitor enabled")
+            logger.debug(_("shell_command_monitor_enabled"))
         if read_news_enabled:
-            logger.debug(f"System: File Monitor News Reader Enabled for {news_file_path}")
+            logger.debug(_("news_reader_enabled", path=news_file_path))
         if bee_enabled:
-            logger.debug(f"System: File Monitor Bee Monitor Enabled for bee.txt")
+            logger.debug(_("bee_monitor_enabled"))
     if wxAlertBroadcastEnabled:
-        logger.debug(f"System: Weather Alert Broadcast Enabled on channels {wxAlertBroadcastChannel}")
+        logger.debug(_("weather_alert_broadcast_enabled", channels=wxAlertBroadcastChannel))
     if emergencyAlertBrodcastEnabled:
-        logger.debug(f"System: Emergency Alert Broadcast Enabled on channels {emergencyAlertBroadcastCh} for FIPS codes {myStateFIPSList}")
+        logger.debug(_("emergency_alert_broadcast_enabled", channels=emergencyAlertBroadcastCh, fips=myStateFIPSList))
         # check if the FIPS codes are set
         if myStateFIPSList == ['']:
-            logger.warning(f"System: No FIPS codes set for iPAWS Alerts")
+            logger.warning(_("no_fips_codes"))
     if emergency_responder_enabled:
-        logger.debug(f"System: Emergency Responder Enabled on channels {emergency_responder_alert_channel} for interface {emergency_responder_alert_interface}")
+        logger.debug(_("emergency_responder_enabled", channels=emergency_responder_alert_channel, interface=emergency_responder_alert_interface))
     if volcanoAlertBroadcastEnabled:
-        logger.debug(f"System: Volcano Alert Broadcast Enabled on channels {volcanoAlertBroadcastChannel}")
+        logger.debug(_("volcano_alert_broadcast_enabled", channels=volcanoAlertBroadcastChannel))
     if qrz_hello_enabled and train_qrz:
-        logger.debug(f"System: QRZ Welcome/Hello Enabled with training mode")
+        logger.debug(_("qrz_welcome_training"))
     if qrz_hello_enabled and not train_qrz:
-        logger.debug(f"System: QRZ Welcome/Hello Enabled")
+        logger.debug(_("qrz_welcome_enabled"))
     if checklist_enabled:
-        logger.debug(f"System: CheckList Module Enabled")
+        logger.debug(_("checklist_enabled"))
     if ignoreChannels != []:
-        logger.debug(f"System: Ignoring Channels: {ignoreChannels}")
+        logger.debug(_("ignoring_channels", channels=ignoreChannels))
     if noisyNodeLogging:
-        logger.debug(f"System: Noisy Node Logging Enabled")
+        logger.debug(_("noisy_node_logging_enabled"))
     if enableSMTP:
         if enableImap:
-            logger.debug(f"System: SMTP Email Alerting Enabled using IMAP")
+            logger.debug(_("smtp_imap_enabled"))
         else:
-            logger.debug(f"System: SMTP Email Alerting Enabled")
+            logger.debug(_("smtp_enabled"))
     if scheduler_enabled:
         # Reminder Scheduler is enabled every Monday at noon send a log message
-        schedule.every().monday.at("12:00").do(lambda: logger.info("System: Scheduled Broadcast Enabled Reminder"))
+        schedule.every().monday.at("12:00").do(lambda: logger.info(_("scheduler_reminder")))
 
         # basic scheduler
         if schedulerValue != '':
-            logger.debug(f"System: Starting the broadcast scheduler from config.ini")
+            logger.debug(_("scheduler_started_config"))
             if schedulerValue.lower() == 'day':
                 if schedulerTime != '':
                     # Send a message every day at the time set in schedulerTime
@@ -1590,7 +1607,7 @@ async def start_rx():
                 # Send a message every minute at the time set in schedulerTime
                 schedule.every(int(schedulerInterval)).minutes.do(lambda: send_message(schedulerMessage, schedulerChannel, 0, schedulerInterface))
         else:
-            logger.debug(f"System: Starting the broadcast scheduler")
+            logger.debug(_("scheduler_started"))
 
         # Enhanced Examples of using the scheduler, Times here are in 24hr format
         # https://schedule.readthedocs.io/en/stable/

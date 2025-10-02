@@ -341,4 +341,7 @@ noisyTelemetryLimit = 5
 debugMetadata = False
 DEBUGpacket = False
 
+[localization]
+# Language for the bot's responses (en, ru)
+language = en
 
