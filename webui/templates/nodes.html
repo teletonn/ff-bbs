@@ -1,5 +1,231 @@
 {% extends "base.html" %}
 
 {% block content %}
-<p>На этой странице будет представлен список всех известных узлов сети. Для каждого узла будет отображаться его ID, имя, уровень заряда батареи, последнее время выхода на связь и другая телеметрическая информация.</p>
+<!-- Modal for node details and registration -->
+<div id="nodeModal" class="modal">
+  <div class="modal-content">
+    <span id="closeModal" class="close">&times;</span>
+    <h2 id="modalTitle" style="color: var(--text-color);">Детали узла</h2>
+    <div id="nodeDetails"></div>
+    <h3 style="color: var(--text-color);">Регистрация пользователя на этом узле</h3>
+    <form id="registerForm">
+      <input type="hidden" id="modalNodeId" name="node_id">
+      <div style="margin-bottom: 15px;">
+        <label for="regUsername" style="color: var(--text-color);">Имя пользователя (3-20 символов):</label>
+        <input type="text" id="regUsername" name="username" required minlength="3" maxlength="20" style="width: 100%; padding: 8px; box-sizing: border-box;">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="regPassword" style="color: var(--text-color);">Пароль (6+ символов):</label>
+        <input type="password" id="regPassword" name="password" required minlength="6" style="width: 100%; padding: 8px; box-sizing: border-box;">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="regNickname" style="color: var(--text-color);">Псевдоним (необязательно):</label>
+        <input type="text" id="regNickname" name="nickname" style="width: 100%; padding: 8px; box-sizing: border-box;">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="regEmail" style="color: var(--text-color);">Email (необязательно):</label>
+        <input type="email" id="regEmail" name="email" style="width: 100%; padding: 8px; box-sizing: border-box;">
+      </div>
+      <button type="submit" style="width: 100%; padding: 10px; background: #28a745; color: white; border: none; border-radius: 4px;">Регистрация</button>
+    </form>
+  </div>
+</div>
+
+<div style="margin-bottom: 20px;">
+  <button id="refreshBtn" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">Обновить</button>
+</div>
+<div id="loading" style="text-align: center; margin: 20px;">Загрузка узлов...</div>
+<table id="nodes-table" style="display: none; width: 100%; border-collapse: collapse;">
+  <thead>
+    <tr style="background: var(--bg-color);">
+      <th style="border: 1px solid var(--border-color); padding: 8px; color: var(--text-color);">Имя/ID</th>
+      <th style="border: 1px solid var(--border-color); padding: 8px; color: var(--text-color);">Статус</th>
+      <th style="border: 1px solid var(--border-color); padding: 8px; color: var(--text-color);">Пользователь</th>
+      <th style="border: 1px solid var(--border-color); padding: 8px; color: var(--text-color);">Последний раз</th>
+      <th style="border: 1px solid var(--border-color); padding: 8px; color: var(--text-color);">Батарея</th>
+      <th style="border: 1px solid var(--border-color); padding: 8px; color: var(--text-color);">Позиция</th>
+      <th style="border: 1px solid var(--border-color); padding: 8px; color: var(--text-color);">SNR</th>
+      <th style="border: 1px solid var(--border-color); padding: 8px; color: var(--text-color);">RSSI</th>
+      <th style="border: 1px solid var(--border-color); padding: 8px; color: var(--text-color);">Хопы</th>
+      <th style="border: 1px solid var(--border-color); padding: 8px; color: var(--text-color);">PKI</th>
+      <th style="border: 1px solid var(--border-color); padding: 8px; color: var(--text-color);">Действия</th>
+    </tr>
+  </thead>
+  <tbody id="nodes-body">
+  </tbody>
+</table>
+<div id="no-nodes" style="display: none; text-align: center; margin: 20px;">Узлы недоступны</div>
+<div id="error" style="display: none; color: red; margin-top: 10px;">Ошибка загрузки узлов</div>
+
+<script>
+function formatTimestamp(timestamp) {
+  if (!timestamp || timestamp === 'N/A') return 'N/A';
+  let date;
+  if (typeof timestamp === 'string') {
+    date = new Date(timestamp);
+  } else if (typeof timestamp === 'number') {
+    // Assume Unix timestamp: if > 1e10, milliseconds, else seconds
+    date = new Date(timestamp > 1e10 ? timestamp : timestamp * 1000);
+  } else {
+    return 'N/A';
+  }
+  if (isNaN(date.getTime())) return 'N/A';
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const year = date.getFullYear();
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  const seconds = String(date.getSeconds()).padStart(2, '0');
+  return `${day}.${month}.${year} ${hours}:${minutes}:${seconds}`;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  const modal = document.getElementById('nodeModal');
+  const closeModal = document.getElementById('closeModal');
+  const registerForm = document.getElementById('registerForm');
+
+  closeModal.onclick = function() {
+    modal.style.display = 'none';
+  }
+
+  window.onclick = function(event) {
+    if (event.target == modal) {
+      modal.style.display = 'none';
+    }
+  }
+
+  registerForm.onsubmit = function(e) {
+    e.preventDefault();
+    const formData = new FormData(registerForm);
+    const data = {
+      node_id: formData.get('node_id'),
+      username: formData.get('username'),
+      password: formData.get('password'),
+      nickname: formData.get('nickname') || null,
+      email: formData.get('email') || null
+    };
+
+    fetch('/api/v1/register_node', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    })
+    .then(res => res.json())
+    .then(result => {
+      if (result.success) {
+        alert('Регистрация успешна! Пожалуйста, войдите.');
+        window.location.href = '/login';
+      } else {
+        alert('Регистрация не удалась: ' + (result.error || 'Неизвестная ошибка'));
+      }
+    })
+    .catch(err => {
+      alert('Ошибка: ' + err.message);
+    });
+  };
+
+  // Manual refresh button
+  document.getElementById('refreshBtn').onclick = loadNodes;
+
+  function loadNodes() {
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('nodes-table').style.display = 'none';
+    document.getElementById('no-nodes').style.display = 'none';
+    document.getElementById('error').style.display = 'none';
+
+    fetch('/api/v1/nodes')
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}: Не удалось загрузить узлы`);
+        return res.json();
+      })
+      .then(data => {
+        const tbody = document.getElementById('nodes-body');
+        tbody.innerHTML = '';
+        if (data.length === 0) {
+          document.getElementById('no-nodes').style.display = 'block';
+        } else {
+          data.forEach(node => {
+            const row = tbody.insertRow();
+            row.style.cursor = 'pointer';
+            row.onclick = () => showNodeModal(node);
+
+            const statusIndicator = node.is_online ? '<span class="status-indicator online">● Онлайн</span>' : '<span class="status-indicator offline">● Офлайн</span>';
+            const userInfo = node.username ? `${node.username}${node.nickname ? ` (${node.nickname})` : ''}` : 'N/A';
+
+            row.insertCell(0).innerHTML = `<strong>${node.name || node.id}</strong>`;
+            row.insertCell(1).innerHTML = statusIndicator;
+            row.insertCell(2).textContent = userInfo;
+            row.insertCell(3).textContent = formatTimestamp(node.last_seen);
+            row.insertCell(4).textContent = node.battery_level ? node.battery_level + '%' : 'N/A';
+            row.insertCell(5).textContent = node.lat && node.lng ? `${node.lat.toFixed(4)}, ${node.lng.toFixed(4)}` : 'N/A';
+            row.insertCell(6).textContent = node.snr || 'N/A';
+            row.insertCell(7).textContent = node.rssi || 'N/A';
+            row.insertCell(8).textContent = node.hop_count || 'N/A';
+            row.insertCell(9).textContent = node.pki_status || 'N/A';
+            row.insertCell(10).innerHTML = '<button onclick="event.stopPropagation(); showNodeModal(' + JSON.stringify(node).replace(/"/g, '"') + ')">Детали</button>';
+          });
+          document.getElementById('nodes-table').style.display = 'table';
+        }
+        document.getElementById('loading').style.display = 'none';
+      })
+      .catch(err => {
+        console.error('Ошибка загрузки узлов:', err);
+        document.getElementById('error').textContent = 'Ошибка загрузки узлов: ' + err.message;
+        document.getElementById('error').style.display = 'block';
+        document.getElementById('loading').style.display = 'none';
+      });
+  }
+
+  function showNodeModal(node) {
+    document.getElementById('modalTitle').textContent = `Узел: ${node.name || node.id}`;
+    const userInfo = node.username ? `
+      <h4 style="color: var(--text-color);">Информация о пользователе</h4>
+      <p style="color: var(--text-color);"><strong>Имя пользователя:</strong> ${node.username}</p>
+      <p style="color: var(--text-color);"><strong>Псевдоним:</strong> ${node.nickname || 'N/A'}</p>
+      <p style="color: var(--text-color);"><strong>Email:</strong> ${node.email || 'N/A'}</p>
+      <p style="color: var(--text-color);"><strong>Роль:</strong> ${node.role || 'N/A'}</p>
+    ` : '<p style="color: var(--text-color);"><em>Нет связанного пользователя</em></p>';
+
+    const statusIndicator = node.is_online ? '<span class="status-indicator online">● Онлайн</span>' : '<span class="status-indicator offline">● Офлайн</span>';
+    const telemetrySection = `
+      <h4 style="color: var(--text-color);">Телеметрия</h4>
+      <p style="color: var(--text-color);"><strong>Статус:</strong> ${statusIndicator}</p>
+      <p style="color: var(--text-color);"><strong>SNR:</strong> ${node.snr || 'N/A'} dB</p>
+      <p style="color: var(--text-color);"><strong>RSSI:</strong> ${node.rssi || 'N/A'} dBm</p>
+      <p style="color: var(--text-color);"><strong>Количество хопов:</strong> ${node.hop_count || 'N/A'}</p>
+      <p style="color: var(--text-color);"><strong>PKI статус:</strong> ${node.pki_status || 'N/A'}</p>
+      <p style="color: var(--text-color);"><strong>Модель устройства:</strong> ${node.hardware_model || 'N/A'}</p>
+      <p style="color: var(--text-color);"><strong>Версия прошивки:</strong> ${node.firmware_version || 'N/A'}</p>
+      <p style="color: var(--text-color);"><strong>Роль:</strong> ${node.role || 'N/A'}</p>
+      <p style="color: var(--text-color);"><strong>Скорость:</strong> ${node.ground_speed ? node.ground_speed + ' м/с' : 'N/A'}</p>
+      <p style="color: var(--text-color);"><strong>Точность битов:</strong> ${node.precision_bits || 'N/A'}</p>
+      <p style="color: var(--text-color);"><strong>Последняя телеметрия:</strong> ${formatTimestamp(node.last_telemetry)}</p>
+    `;
+
+    document.getElementById('nodeDetails').innerHTML = `
+      <h4 style="color: var(--text-color);">Информация об узле</h4>
+      <p style="color: var(--text-color);"><strong>ID:</strong> ${node.id}</p>
+      <p style="color: var(--text-color);"><strong>Имя:</strong> ${node.name || 'N/A'}</p>
+      <p style="color: var(--text-color);"><strong>Широта:</strong> ${node.lat || 'N/A'}</p>
+      <p style="color: var(--text-color);"><strong>Долгота:</strong> ${node.lng || 'N/A'}</p>
+      <p style="color: var(--text-color);"><strong>Высота:</strong> ${node.altitude || 'N/A'}</p>
+      <p style="color: var(--text-color);"><strong>Батарея:</strong> ${node.battery_level ? node.battery_level + '%' : 'N/A'}</p>
+      <p style="color: var(--text-color);"><strong>Последний раз:</strong> ${formatTimestamp(node.last_seen)}</p>
+      ${telemetrySection}
+      ${userInfo}
+    `;
+    document.getElementById('modalNodeId').value = node.id;
+    document.getElementById('regUsername').value = '';
+    document.getElementById('regPassword').value = '';
+    document.getElementById('regNickname').value = '';
+    document.getElementById('regEmail').value = '';
+    modal.style.display = 'block';
+  }
+
+  loadNodes();
+});
+
+loadNodes();
+setInterval(loadNodes, 10000);
+</script>
 {% endblock %}

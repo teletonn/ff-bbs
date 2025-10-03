@@ -1,5 +1,158 @@
 {% extends "base.html" %}
 
 {% block content %}
-<p>Это главная страница дашборда. Здесь будет отображаться общая сводка о состоянии сети "Светлячок": количество активных узлов, последние сообщения, важные оповещения и другая ключевая информация.</p>
+<div class="stats-container" style="display: flex; gap: 20px; flex-wrap: wrap;">
+   <div class="stat-card">
+     <h3>Всего Узлов</h3>
+     <div id="total-nodes">Загрузка...</div>
+   </div>
+   <div class="stat-card">
+     <h3>Всего Сообщений</h3>
+     <div id="total-messages">Загрузка...</div>
+   </div>
+   <div class="stat-card">
+     <h3>Активных Тем</h3>
+     <div id="active-topics">Загрузка...</div>
+   </div>
+   <div class="stat-card">
+     <h3>Активных Пользователей</h3>
+     <div id="active-users">Загрузка...</div>
+   </div>
+   <div class="stat-card">
+     <h3>Всего Пользователей</h3>
+     <div id="total-users">Загрузка...</div>
+   </div>
+   <div class="stat-card">
+     <h3>Активных Пользователей (24ч)</h3>
+     <div id="active-users-24h">Загрузка...</div>
+   </div>
+   <div class="stat-card">
+     <h3>Сообщений Сегодня</h3>
+     <div id="today-messages">Загрузка...</div>
+   </div>
+ <div class="stat-card">
+ <h3>Статус Бота</h3>
+ <div id="bot-status">Загрузка...</div>
+ </div>
+</div>
+
+<div class="activity-container">
+   <h3>Недавняя Активность</h3>
+   <div id="activity-feed" style="max-height: 400px; overflow-y: auto;">
+     Загрузка активности...
+   </div>
+</div>
+
+<div id="error" style="display: none; color: red; margin-top: 10px;">Ошибка загрузки данных</div>
+
+<div style="margin-top: 20px;">
+    <button id="refresh-btn" onclick="manualRefresh()" style="padding: 10px 20px; background-color: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer;">Обновить данные</button>
+</div>
+
+<script>
+function loadStats() {
+    // Show loading state
+    const statElements = ['total-nodes', 'total-messages', 'active-topics', 'active-users', 'total-users', 'active-users-24h', 'today-messages', 'bot-status'];
+    statElements.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = 'Загрузка...';
+    });
+
+    fetch('/api/v1/stats')
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}: Не удалось получить статистику`);
+        return res.json();
+      })
+      .then(data => {
+        // Update stats with smooth transitions
+        const updates = [
+            { id: 'total-nodes', value: data.total_nodes || 0 },
+            { id: 'total-messages', value: data.total_messages || 0 },
+            { id: 'active-topics', value: data.active_topics || 0 },
+            { id: 'active-users', value: data.active_users || 0 },
+            { id: 'total-users', value: data.total_users || 0 },
+            { id: 'active-users-24h', value: data.active_users_24h || 0 },
+            { id: 'today-messages', value: data.today_messages || 0 }
+        ];
+
+        updates.forEach(({ id, value }) => {
+            const el = document.getElementById(id);
+            if (el) {
+                el.style.transition = 'color 0.3s ease';
+                el.textContent = value;
+            }
+        });
+
+        const botStatusEl = document.getElementById('bot-status');
+        const status = data.bot_status || 'unknown';
+        botStatusEl.textContent = status;
+        botStatusEl.className = `status-indicator ${status}`;
+
+        document.getElementById('error').style.display = 'none';
+      })
+      .catch(err => {
+        console.error('Stats fetch error:', err);
+        document.getElementById('error').textContent = 'Ошибка загрузки статистики: ' + err.message;
+        document.getElementById('error').style.display = 'block';
+
+        // Reset loading states on error
+        statElements.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = 'Ошибка';
+        });
+      });
+}
+
+function loadActivity() {
+    return fetch('/api/v1/activity')
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}: Не удалось получить активность`);
+        return res.json();
+      })
+      .then(data => {
+        updateActivityFeed(data);
+      })
+      .catch(err => {
+        console.error('Activity fetch error:', err);
+        document.getElementById('activity-feed').textContent = 'Ошибка загрузки активности: ' + err.message;
+      });
+}
+
+function updateActivityFeed(activity) {
+   const feedEl = document.getElementById('activity-feed');
+   if (!activity || activity.length === 0) {
+     feedEl.innerHTML = '<p>Нет недавней активности</p>';
+     return;
+   }
+
+   const html = activity.map(item => {
+     const typeIcon = item.type === 'message' ? '💬' : item.type === 'command' ? '⚙️' : item.type === 'node' ? '📡' : '📝';
+     const time = new Date(item.timestamp).toLocaleString();
+     return `<div class="activity-item">
+       <strong>${typeIcon} ${item.type.toUpperCase()}</strong> от ${item.source}<br>
+       <small>${time}</small><br>
+       ${item.content}
+     </div>`;
+   }).join('');
+
+   feedEl.innerHTML = html;
+}
+
+
+function manualRefresh() {
+    const btn = document.getElementById('refresh-btn');
+    btn.disabled = true;
+    btn.textContent = 'Обновление...';
+    loadStats();
+    loadActivity().then(() => {
+        btn.disabled = false;
+        btn.textContent = 'Обновить данные';
+    });
+}
+
+loadStats();
+loadActivity();
+setInterval(loadStats, 10000); // Обновлять статистику каждые 10 секунд
+setInterval(loadActivity, 10000); // Обновлять активность каждые 10 секунд
+</script>
 {% endblock %}

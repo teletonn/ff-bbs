@@ -1,0 +1,245 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="bot-management">
+    <!-- Bot Status Section -->
+    <div class="glass-card">
+        <h3>Статус Бота</h3>
+        <div class="status-grid">
+            <div class="glass-card">
+                <label>Статус:</label>
+                <span id="bot-status" class="status-indicator">Загрузка...</span>
+            </div>
+            <div class="glass-card">
+                <label>Время работы:</label>
+                <span id="bot-uptime">Загрузка...</span>
+            </div>
+            <div class="glass-card">
+                <label>Последняя активность:</label>
+                <span id="bot-last-activity">Загрузка...</span>
+            </div>
+            <div class="glass-card">
+                <label>Версия:</label>
+                <span id="bot-version">1.0.0</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bot Settings Section -->
+    <div class="glass-card">
+        <h3>Настройки Бота</h3>
+        <form id="bot-settings-form">
+            <div class="form-group">
+                <label for="llm-model">Модель LLM:</label>
+                <select id="llm-model" name="llm_model">
+                    <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
+                    <option value="gpt-4">GPT-4</option>
+                    <option value="claude-3">Claude-3</option>
+                    <option value="local-llm">Локальная модель</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Инструменты:</label>
+                <div class="checkbox-group">
+                    <label><input type="checkbox" name="tools" value="weather"> Погода</label>
+                    <label><input type="checkbox" name="tools" value="location"> Геолокация</label>
+                    <label><input type="checkbox" name="tools" value="system"> Система</label>
+                    <label><input type="checkbox" name="tools" value="web"> Веб-поиск</label>
+                </div>
+            </div>
+            <button type="submit">Сохранить настройки</button>
+        </form>
+    </div>
+
+    <!-- Analytics Dashboard -->
+    <div class="glass-card">
+        <h3>Аналитика</h3>
+        <div class="analytics-grid">
+            <div class="glass-card">
+                <h4>Использование команд</h4>
+                <canvas id="command-usage-chart" width="300" height="200"></canvas>
+            </div>
+            <div class="glass-card">
+                <h4>Время отклика</h4>
+                <canvas id="response-time-chart" width="300" height="200"></canvas>
+            </div>
+            <div class="glass-card">
+                <h4>Статистика ошибок</h4>
+                <div id="error-stats">
+                    <p>Общее количество ошибок: <span id="total-errors">0</span></p>
+                    <p>Ошибки за сегодня: <span id="today-errors">0</span></p>
+                    <p>Уровень ошибок: <span id="error-rate">0%</span></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Commands Section -->
+    <div class="glass-card">
+        <h3>Быстрые команды</h3>
+        <div class="quick-commands">
+            <button onclick="executeCommand('restart')">Перезапуск бота</button>
+            <button onclick="executeCommand('clear_cache')">Очистить кэш</button>
+            <button onclick="executeCommand('reload_config')">Перезагрузить конфиг</button>
+            <button onclick="executeCommand('update_modules')">Обновить модули</button>
+        </div>
+        <div id="command-result" style="margin-top: 10px;"></div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+let commandUsageChart, responseTimeChart;
+
+async function loadBotStatus() {
+    try {
+        const response = await fetch('/api/v1/bot/status');
+        const data = await response.json();
+
+        document.getElementById('bot-status').textContent = data.status;
+        document.getElementById('bot-status').className = `status-indicator ${data.status}`;
+        document.getElementById('bot-uptime').textContent = data.uptime;
+        document.getElementById('bot-last-activity').textContent = new Date(data.last_activity).toLocaleString();
+    } catch (error) {
+        console.error('Error loading bot status:', error);
+    }
+}
+
+async function loadBotSettings() {
+    try {
+        const response = await fetch('/api/v1/bot/settings');
+        const settings = await response.json();
+
+        document.getElementById('llm-model').value = settings.llm_model || 'gpt-3.5-turbo';
+
+        const toolCheckboxes = document.querySelectorAll('input[name="tools"]');
+        toolCheckboxes.forEach(cb => {
+            cb.checked = settings.enabled_tools && settings.enabled_tools.includes(cb.value);
+        });
+    } catch (error) {
+        console.error('Error loading bot settings:', error);
+    }
+}
+
+async function loadAnalytics() {
+    try {
+        const response = await fetch('/api/v1/bot/analytics');
+        const data = await response.json();
+
+        // Command usage chart
+        if (commandUsageChart) commandUsageChart.destroy();
+        commandUsageChart = new Chart(document.getElementById('command-usage-chart'), {
+            type: 'bar',
+            data: {
+                labels: data.command_usage.map(item => item.command),
+                datasets: [{
+                    label: 'Количество использований',
+                    data: data.command_usage.map(item => item.count),
+                    backgroundColor: 'rgba(54, 162, 235, 0.5)',
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    y: { beginAtZero: true }
+                }
+            }
+        });
+
+        // Response time chart
+        if (responseTimeChart) responseTimeChart.destroy();
+        responseTimeChart = new Chart(document.getElementById('response-time-chart'), {
+            type: 'line',
+            data: {
+                labels: data.response_times.map(item => item.hour),
+                datasets: [{
+                    label: 'Среднее время отклика (мс)',
+                    data: data.response_times.map(item => item.avg_time),
+                    borderColor: 'rgba(75, 192, 192, 1)',
+                    backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                    tension: 0.1
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    y: { beginAtZero: true }
+                }
+            }
+        });
+
+        // Error stats
+        document.getElementById('total-errors').textContent = data.error_stats.total;
+        document.getElementById('today-errors').textContent = data.error_stats.today;
+        document.getElementById('error-rate').textContent = data.error_stats.rate + '%';
+
+    } catch (error) {
+        console.error('Error loading analytics:', error);
+    }
+}
+
+document.getElementById('bot-settings-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const formData = new FormData(e.target);
+    const settings = {
+        llm_model: formData.get('llm-model'),
+        enabled_tools: Array.from(document.querySelectorAll('input[name="tools"]:checked')).map(cb => cb.value)
+    };
+
+    try {
+        const response = await fetch('/api/v1/bot/settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(settings)
+        });
+
+        if (response.ok) {
+            alert('Настройки сохранены успешно');
+        } else {
+            alert('Ошибка при сохранении настроек');
+        }
+    } catch (error) {
+        console.error('Error saving settings:', error);
+        alert('Ошибка при сохранении настроек');
+    }
+});
+
+async function executeCommand(command) {
+    const resultDiv = document.getElementById('command-result');
+    resultDiv.textContent = 'Выполнение команды...';
+
+    try {
+        const response = await fetch('/api/v1/bot/commands', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command: command })
+        });
+
+        const result = await response.json();
+        if (response.ok) {
+            resultDiv.textContent = `Команда выполнена: ${result.message}`;
+            resultDiv.style.color = 'green';
+        } else {
+            resultDiv.textContent = `Ошибка: ${result.detail}`;
+            resultDiv.style.color = 'red';
+        }
+    } catch (error) {
+        resultDiv.textContent = `Ошибка выполнения: ${error.message}`;
+        resultDiv.style.color = 'red';
+    }
+}
+
+// Load data on page load
+loadBotStatus();
+loadBotSettings();
+loadAnalytics();
+
+// Refresh status every 30 seconds
+setInterval(loadBotStatus, 30000);
+setInterval(loadAnalytics, 60000); // Refresh analytics every minute
+</script>
+
+{% endblock %}

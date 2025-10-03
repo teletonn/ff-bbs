@@ -1,4 +1,3 @@
-# https://github.com/danfriedman30/pythongame
 # Adapted for Meshtastic mesh-bot by K7MHI Kelly Keeton 2024
 
 import random

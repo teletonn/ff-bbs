@@ -1,5 +1,297 @@
 {% extends "base.html" %}
 
 {% block content %}
-<p>Триггеры позволяют автоматизировать действия в ответ на события в сети. Например, можно настроить отправку уведомления, когда узел входит в определенную гео-зону или покидает ее. Здесь будет интерфейс для создания и управления такими триггерами.</p>
+<div class="container mt-4">
+    <h2>Триггеры</h2>
+    <button class="btn btn-primary mb-3" data-bs-toggle="modal" data-bs-target="#triggerModal" onclick="openAddModal()">Добавить Новый Триггер</button>
+
+    <table class="table table-striped" id="triggersTable">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Геозона</th>
+                <th>Условие</th>
+                <th>Действие</th>
+                <th>Параметры</th>
+                <th>Активен</th>
+                <th>Действия</th>
+            </tr>
+        </thead>
+        <tbody id="triggersTbody">
+            {% if triggers %}
+                {% for trigger in triggers %}
+                <tr data-id="{{ trigger.id }}">
+                    <td>{{ trigger.id }}</td>
+                    <td id="geofence-name-{{ trigger.id }}">Загрузка...</td>
+                    <td>{{ trigger.condition }}</td>
+                    <td>{{ trigger.action }}</td>
+                    <td><span id="params-{{ trigger.id }}">{{ trigger.parameters }}</span></td>
+                    <td>
+                        <input type="checkbox" class="form-check-input active-toggle" {{ 'checked' if trigger.active else '' }} data-id="{{ trigger.id }}">
+                    </td>
+                    <td>
+                        <button class="btn btn-sm btn-warning edit-btn" data-id="{{ trigger.id }}">Редактировать</button>
+                        <button class="btn btn-sm btn-danger delete-btn" data-id="{{ trigger.id }}">Удалить</button>
+                    </td>
+                </tr>
+                {% endfor %}
+            {% else %}
+                <tr>
+                    <td colspan="7" class="text-center">Триггеры не найдены.</td>
+                </tr>
+            {% endif %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Modal for Add/Edit Trigger -->
+<div class="modal fade" id="triggerModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="modalTitle">Add Trigger</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="triggerForm">
+                    <input type="hidden" id="triggerId" value="">
+                    <div class="mb-3">
+                        <label for="geofence_id" class="form-label">Geofence ID</label>
+                        <select class="form-select" id="geofence_id" required>
+                            <option value="">Select Geofence</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="condition" class="form-label">Condition</label>
+                        <select class="form-select" id="condition" required>
+                            <option value="enter">Enter</option>
+                            <option value="exit">Exit</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label for="action" class="form-label">Action</label>
+                        <input type="text" class="form-control" id="action" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="parameters" class="form-label">Parameters (JSON)</label>
+                        <textarea class="form-control" id="parameters" rows="3">{}</textarea>
+                    </div>
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" class="form-check-input" id="active" checked>
+                        <label class="form-check-label" for="active">Active</label>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                <button type="button" class="btn btn-primary" onclick="saveTrigger()">Save</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let editingId = null;
+let triggers = {{ triggers | tojson | safe }};
+let geofences = [];
+
+function loadGeofences() {
+    fetch('/api/v1/geofences')
+    .then(res => res.json())
+    .then(data => {
+        geofences = data;
+        populateGeofenceSelect();
+        updateGeofenceNames();
+        renderTable();
+    })
+    .catch(err => console.error('Error loading geofences:', err));
+}
+
+function populateGeofenceSelect() {
+    const select = document.getElementById('geofence_id');
+    select.innerHTML = '<option value="">Select Geofence</option>';
+    geofences.forEach(g => {
+        const option = document.createElement('option');
+        option.value = g.id;
+        option.textContent = g.name;
+        select.appendChild(option);
+    });
+}
+
+function updateGeofenceNames() {
+    triggers.forEach(t => {
+        const geofence = geofences.find(g => g.id == t.geofence_id);
+        const nameEl = document.getElementById(`geofence-name-${t.id}`);
+        if (nameEl && geofence) {
+            nameEl.textContent = geofence.name;
+        }
+    });
+}
+
+function renderTable() {
+    const tbody = document.getElementById('triggersTbody');
+    tbody.innerHTML = '';
+    if (triggers.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center">No triggers found.</td></tr>';
+        return;
+    }
+    triggers.forEach(t => {
+        const row = document.createElement('tr');
+        row.dataset.id = t.id;
+        const geofenceName = geofences.find(g => g.id == t.geofence_id)?.name || 'Unknown';
+        const paramsPreview = t.parameters ? JSON.stringify(JSON.parse(t.parameters)) : '{}';
+        row.innerHTML = `
+            <td>${t.id}</td>
+            <td>${geofenceName}</td>
+            <td>${t.condition}</td>
+            <td>${t.action}</td>
+            <td>${paramsPreview}</td>
+            <td><input type="checkbox" class="form-check-input active-toggle" ${t.active ? 'checked' : ''} data-id="${t.id}"></td>
+            <td>
+                <button class="btn btn-sm btn-warning edit-btn" data-id="${t.id}">Edit</button>
+                <button class="btn btn-sm btn-danger delete-btn" data-id="${t.id}">Delete</button>
+            </td>
+        `;
+        tbody.appendChild(row);
+    });
+    // Re-attach event listeners
+    document.querySelectorAll('.active-toggle').forEach(toggle => {
+        toggle.removeEventListener('change', handleActiveToggle);
+        toggle.addEventListener('change', handleActiveToggle);
+    });
+    document.querySelectorAll('.edit-btn').forEach(btn => {
+        btn.removeEventListener('click', handleEditClick);
+        btn.addEventListener('click', handleEditClick);
+    });
+    document.querySelectorAll('.delete-btn').forEach(btn => {
+        btn.removeEventListener('click', handleDeleteClick);
+        btn.addEventListener('click', handleDeleteClick);
+    });
+}
+
+function openAddModal() {
+    document.getElementById('modalTitle').textContent = 'Add Trigger';
+    document.getElementById('triggerForm').reset();
+    document.getElementById('triggerId').value = '';
+    document.getElementById('condition').value = 'enter';
+    document.getElementById('parameters').value = '{}';
+    document.getElementById('active').checked = true;
+    editingId = null;
+    new bootstrap.Modal(document.getElementById('triggerModal')).show();
+}
+
+function openEditModal(id) {
+    const trigger = triggers.find(t => t.id == id);
+    if (!trigger) return;
+    document.getElementById('modalTitle').textContent = 'Edit Trigger';
+    document.getElementById('triggerId').value = id;
+    document.getElementById('geofence_id').value = trigger.geofence_id;
+    document.getElementById('condition').value = trigger.condition;
+    document.getElementById('action').value = trigger.action;
+    document.getElementById('parameters').value = trigger.parameters || '{}';
+    document.getElementById('active').checked = trigger.active;
+    editingId = id;
+    new bootstrap.Modal(document.getElementById('triggerModal')).show();
+}
+
+function saveTrigger() {
+    const id = document.getElementById('triggerId').value;
+    let parameters = document.getElementById('parameters').value;
+    try {
+        parameters = JSON.stringify(JSON.parse(parameters));
+    } catch (e) {
+        alert('Invalid JSON in parameters');
+        return;
+    }
+    const data = {
+        geofence_id: parseInt(document.getElementById('geofence_id').value),
+        condition: document.getElementById('condition').value,
+        action: document.getElementById('action').value,
+        parameters: parameters,
+        active: document.getElementById('active').checked ? 1 : 0
+    };
+    if (!data.geofence_id || !data.condition || !data.action) {
+        alert('Please fill all required fields');
+        return;
+    }
+    const url = id ? `/api/v1/triggers/${id}` : '/api/v1/triggers';
+    const method = id ? 'PUT' : 'POST';
+    fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    })
+    .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+    })
+    .then(result => {
+        if (id) {
+            const idx = triggers.findIndex(t => t.id == id);
+            triggers[idx] = { ...triggers[idx], ...data };
+        } else {
+            data.id = result.id;
+            triggers.push(data);
+        }
+        renderTable();
+        bootstrap.Modal.getInstance(document.getElementById('triggerModal')).hide();
+        alert('Trigger saved successfully');
+    })
+    .catch(err => {
+        console.error(err);
+        alert('Error saving trigger: ' + err.message);
+    });
+}
+
+function deleteTrigger(id) {
+    if (!confirm('Are you sure?')) return;
+    fetch(`/api/v1/triggers/${id}`, { method: 'DELETE' })
+    .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+    })
+    .then(() => {
+        triggers = triggers.filter(t => t.id != id);
+        renderTable();
+        alert('Trigger deleted');
+    })
+    .catch(err => {
+        console.error(err);
+        alert('Error deleting trigger: ' + err.message);
+    });
+}
+
+function handleActiveToggle(e) {
+    const id = e.target.dataset.id;
+    const active = e.target.checked ? 1 : 0;
+    fetch(`/api/v1/triggers/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active })
+    })
+    .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const idx = triggers.findIndex(t => t.id == id);
+        triggers[idx].active = active;
+    })
+    .catch(err => {
+        console.error(err);
+        e.target.checked = !active; // Revert
+        alert('Error updating active status');
+    });
+}
+
+function handleEditClick(e) {
+    openEditModal(parseInt(e.target.dataset.id));
+}
+
+function handleDeleteClick(e) {
+    deleteTrigger(parseInt(e.target.dataset.id));
+}
+
+// Initial load
+document.addEventListener('DOMContentLoaded', function() {
+    loadGeofences();
+});
+</script>
 {% endblock %}

@@ -1,4 +1,4 @@
-# Port of https://github.com/devtronvarma/Video-Poker-Terminal-Game
+# Port of Video-Poker-Terminal-Game
 # Adapted for Meshtastic mesh-bot by K7MHI Kelly Keeton 2024
 import random
 import time

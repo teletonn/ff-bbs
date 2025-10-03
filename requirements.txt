@@ -10,3 +10,5 @@ geopy
 schedule
 wikipedia
 googlesearch-python
+itsdangerous
+psutil

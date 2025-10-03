@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="glass-card" style="max-width: 400px; margin: 50px auto;">
+    <h2>Вход</h2>
+    <form method="POST">
+        <div style="margin-bottom: 15px;">
+            <label for="username">Имя пользователя:</label>
+            <input type="text" id="username" name="username" required>
+        </div>
+        <div style="margin-bottom: 15px;">
+            <label for="password">Пароль:</label>
+            <input type="password" id="password" name="password" required>
+        </div>
+        <button type="submit">Войти</button>
+    </form>
+    <p style="text-align: center; margin-top: 15px;"><a href="/register">Регистрация</a></p>
+</div>
+{% endblock %}

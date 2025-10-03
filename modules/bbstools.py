@@ -4,6 +4,7 @@
 import pickle # pip install pickle
 from modules.log import *
 import time
+from webui import db_handler
 
 trap_list_bbs = ("bbslist", "bbspost", "bbsread", "bbsdelete", "bbshelp", "bbsinfo", "bbslink", "bbsack")
 
@@ -18,7 +19,7 @@ def load_bbsdb():
         with open('data/bbsdb.pkl', 'rb') as f:
             bbs_messages = pickle.load(f)
     except Exception as e:
-        bbs_messages = [[1, "Welcome to meshBBS", "Welcome to the BBS, please post a message!",0]]
+        bbs_messages = [[1, "Светлячок BBS", "Приветствую! Пиши сообщение и его увидят все.",0]]
         logger.debug("System: Creating new data/bbsdb.pkl")
         with open('data/bbsdb.pkl', 'wb') as f:
             pickle.dump(bbs_messages, f)
@@ -32,7 +33,7 @@ def save_bbsdb():
 
 def bbs_help():
     # help message
-    return "BBS Commands:\n'bbslist'\n'bbspost $subject #message'\n'bbsread #'\n'bbsdelete #'\n'cmd'"
+    return "BBS команды:\n'bbslist'\n'bbspost $subject #message'\n'bbsread #'\n'bbsdelete #'"
 
 def bbs_list_messages():
     #print (f"System: raw bbs_messages: {bbs_messages}")
@@ -40,7 +41,7 @@ def bbs_list_messages():
     message_list = ""
     for message in bbs_messages:
         # message[0] is the messageID, message[1] is the subject
-        message_list += "Msg #" + str(message[0]) + " " + message[1] + "\n"
+        message_list += "Сбщ #" + str(message[0]) + " " + message[1] + "\n"
 
     # last newline removed
     message_list = message_list[:-1]
@@ -55,6 +56,9 @@ def bbs_delete_message(messageID = 0, fromNode = 0):
     if messageID > 0:
         # if same user wrote message they can delete it
         if fromNode == bbs_messages[messageID - 1][3] or str(fromNode) in bbs_admin_list:
+            msg = bbs_messages[messageID - 1]
+            if len(msg) >= 6 and msg[5]:
+                db_handler.delete_forum_post(msg[5])
             bbs_messages.pop(messageID - 1)
             # reset the messageID
             for i in range(len(bbs_messages)):
@@ -63,7 +67,7 @@ def bbs_delete_message(messageID = 0, fromNode = 0):
             # save the bbsdb
             save_bbsdb()
             
-            return "Msg #" + str(messageID) + " deleted."
+            return "Сбщ #" + str(messageID) + " удалено."
         else:
             logger.warning(f"System: node {fromNode}, tried to delete a message: {bbs_messages[messageID - 1]} and was dropped.")
             return "You are not authorized to delete this message."
@@ -77,34 +81,37 @@ def bbs_post_message(subject, message, fromNode):
     # Check the BAN list for naughty nodes and silently drop the message
     if str(fromNode) in bbs_ban_list:
         logger.warning(f"System: Naughty node {fromNode}, tried to post a message: {subject}, {message} and was dropped.")
-        return "Message posted. ID is: " + str(messageID)
+        return "Пуубликация не удалась. ID: " + str(messageID)
     
     # validate not a duplicate message
     for msg in bbs_messages:
         if msg[1].strip().lower() == subject.strip().lower() and msg[2].strip().lower() == message.strip().lower():
             messageID = msg[0]
-            return "Message posted. ID is: " + str(messageID)
+            return "Сообщение опубликовано. Его ID: " + str(messageID)
 
+    timestamp = int(time.time())
+    text = f"{subject}: {message}"
+    post_id = db_handler.save_forum_post(fromNode, text, timestamp)
     # append the message to the list
-    bbs_messages.append([messageID, subject, message, fromNode])
+    bbs_messages.append([messageID, subject, message, fromNode, timestamp, post_id])
     logger.info(f"System: NEW Message Posted, subject: {subject}, message: {message} from {fromNode}")
 
     # save the bbsdb
     save_bbsdb()
 
-    return "Message posted. ID is: " + str(messageID)
+    return "Сообщение опубликовано. Его ID: " + str(messageID)
 
 def bbs_read_message(messageID = 0):
     #if messageID out of range ignore
     if (messageID - 1) >= len(bbs_messages):
-        return "Message not found."
+        return "Сообщение не найдено."
     if messageID > 0:
         fromNode = bbs_messages[messageID - 1][3]
         fromNodeHex = hex(fromNode)[-4:]
         message = bbs_messages[messageID - 1]
-        return f"Msg #{message[0]}\nFrom:{fromNodeHex}\n{message[2]}"
+        return f"Сбщ #{message[0]}\nОт:{fromNodeHex}\n{message[2]}"
     else:
-        return "Please specify a message number to read."
+        return "Что бы прочитать сообщение укажи его ID."
    
 def save_bbsdm():
     global bbs_dm
@@ -137,12 +144,12 @@ def bbs_post_dm(toNode, message, fromNode):
 
     # save the bbsdb
     save_bbsdm()
-    return "BBS DM Posted for node " + str(toNode)
+    return "BBS DM отправлено для ноды " + str(toNode)
 
 def get_bbs_stats():
     global bbs_messages, bbs_dm
     # Return some stats on the bbs pending messages and total posted messages
-    return f"📡BBSdb has {len(bbs_messages)} messages.\nDirect ✉️ Messages waiting: {(len(bbs_dm) - 1)}"
+    return f"📡В БД BBS {len(bbs_messages)} сообщений.\nОжидающих доставки ✉️ ЛС сообщений: {(len(bbs_dm) - 1)}"
 
 def bbs_check_dm(toNode):
     global bbs_dm

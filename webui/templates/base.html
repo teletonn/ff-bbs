@@ -24,10 +24,17 @@
             </ul>
         </nav>
     </aside>
-
+ 
     <main class="main-content">
         <header class="content-header">
             <h2>{{ page_title }}</h2>
+            <div class="auth-links">
+                {% if is_authenticated %}
+                    <a href="/logout">Выйти</a>
+                {% else %}
+                    <a href="/login">Войти</a> | <a href="/register">Регистрация</a>
+                {% endif %}
+            </div>
         </header>
         <section class="content-block">
             {% block content %}
@@ -35,5 +42,19 @@
             {% endblock %}
         </section>
     </main>
+<script>
+// Register service worker for caching and offline capabilities
+if ('serviceWorker' in navigator) {
+   window.addEventListener('load', function() {
+       navigator.serviceWorker.register('/static/service-worker.js')
+           .then(function(registration) {
+               console.log('Service Worker registered successfully:', registration.scope);
+           })
+           .catch(function(error) {
+               console.log('Service Worker registration failed:', error);
+           });
+   });
+}
+</script>
 </body>
 </html>

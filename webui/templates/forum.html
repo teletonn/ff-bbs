@@ -1,5 +1,99 @@
 {% extends "base.html" %}
 
 {% block content %}
-<p>Раздел "Форум" будет представлять собой доску объявлений (BBS), интегрированную с сетью. Пользователи смогут создавать темы, публиковать сообщения и отвечать другим участникам. Все сообщения будут синхронизироваться с соответствующей функцией бота.</p>
+<div id="loading" style="text-align: center; margin: 20px;">Загрузка тем...</div>
+<div id="topics-container" style="display: none;">
+  <h3>Темы</h3>
+  <ul id="topics-list" style="list-style: none; padding: 0;">
+  </ul>
+</div>
+<div id="posts-container" style="display: none; margin-top: 20px;">
+  <h3>Сообщения</h3>
+  <div id="posts-loading" style="text-align: center; margin: 10px;">Загрузка сообщений...</div>
+  <div id="posts-list"></div>
+</div>
+<div id="no-topics" style="display: none; text-align: center; margin: 20px;">Темы недоступны</div>
+<div id="error" style="display: none; color: red; margin-top: 10px;">Ошибка загрузки тем</div>
+
+<script>
+let currentTopicId = null;
+
+function loadTopics() {
+  document.getElementById('loading').style.display = 'block';
+  document.getElementById('topics-container').style.display = 'none';
+  document.getElementById('no-topics').style.display = 'none';
+  document.getElementById('error').style.display = 'none';
+  if (currentTopicId) {
+    loadPosts(currentTopicId);
+  }
+
+  fetch('/api/v1/forum/topics')
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}: Не удалось загрузить темы`);
+      return res.json();
+    })
+    .then(data => {
+      const list = document.getElementById('topics-list');
+      list.innerHTML = '';
+      if (data.length === 0) {
+        document.getElementById('no-topics').style.display = 'block';
+      } else {
+        data.forEach(topic => {
+          const li = document.createElement('li');
+          li.style = 'border: 1px solid #ccc; padding: 10px; margin: 5px 0; cursor: pointer; border-radius: 4px;';
+          li.innerHTML = `<strong>${topic.title || ''}</strong> от ${topic.author || ''} в ${topic.timestamp || ''}`;
+          li.onclick = () => loadPosts(topic.topic_id || topic.id);
+          list.appendChild(li);
+        });
+        document.getElementById('topics-container').style.display = 'block';
+      }
+      document.getElementById('loading').style.display = 'none';
+    })
+    .catch(err => {
+      console.error('Ошибка загрузки тем:', err);
+      document.getElementById('error').textContent = 'Ошибка загрузки тем: ' + err.message;
+      document.getElementById('error').style.display = 'block';
+      document.getElementById('loading').style.display = 'none';
+    });
+}
+
+function loadPosts(topicId) {
+  currentTopicId = topicId;
+  document.getElementById('posts-loading').style.display = 'block';
+  document.getElementById('posts-list').innerHTML = '';
+  document.getElementById('posts-container').style.display = 'block';
+
+  fetch(`/api/v1/forum/posts/${topicId}`)
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}: Не удалось загрузить сообщения`);
+      return res.json();
+    })
+    .then(data => {
+      const postsDiv = document.getElementById('posts-list');
+      postsDiv.innerHTML = '';
+      if (data.length === 0) {
+        postsDiv.innerHTML = '<p>В этой теме нет сообщений.</p>';
+      } else {
+        data.forEach(post => {
+          const postDiv = document.createElement('div');
+          postDiv.style = 'border: 1px solid #ddd; padding: 10px; margin: 10px 0; border-radius: 4px;';
+          postDiv.innerHTML = `
+            <p><strong>ID: ${post.id || ''}</strong> от ${post.author || ''} в ${post.timestamp || ''}</p>
+            <p>${post.content || ''}</p>
+          `;
+          postsDiv.appendChild(postDiv);
+        });
+      }
+      document.getElementById('posts-loading').style.display = 'none';
+    })
+    .catch(err => {
+      console.error('Ошибка загрузки сообщений:', err);
+      document.getElementById('posts-list').innerHTML = '<p>Ошибка загрузки сообщений: ' + err.message + '</p>';
+      document.getElementById('posts-loading').style.display = 'none';
+    });
+}
+
+loadTopics();
+setInterval(loadTopics, 10000);
+</script>
 {% endblock %}

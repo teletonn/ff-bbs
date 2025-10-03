@@ -1,5 +1,194 @@
 {% extends "base.html" %}
 
 {% block content %}
-<p>Раздел настроек позволит конфигурировать как работу самого веб-дашборда (например, параметры подключения к боту), так и некоторые параметры бота "Светлячок" через веб-интерфейс, если это будет реализовано в будущем.</p>
+<div class="settings-page">
+  <div class="settings-header">
+    <h3>Настройки</h3>
+    <div class="settings-actions">
+      <button id="export-btn" class="btn btn-primary">Экспорт в config.ini</button>
+      <button id="restart-btn" class="btn btn-danger" onclick="confirmRestart()">Перезапуск бота</button>
+    </div>
+  </div>
+
+  <div id="loading" style="text-align: center; margin: 20px; display: none;">Загрузка настроек...</div>
+  <div id="error" style="display: none; color: red; margin: 20px; text-align: center;"></div>
+  <div id="settings-container" style="display: none;">
+    {% for section, items in sections.items() %}
+      <h4>{{ section | upper }}</h4>
+      <table class="settings-table">
+        <thead>
+          <tr>
+            <th>Ключ</th>
+            <th>Описание</th>
+            <th>Значение</th>
+            <th>Действия</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for option, data in items.items() %}
+            <tr data-key="{{ data.key }}">
+              <td>{{ option }}</td>
+              <td>{{ data.description }}</td>
+              <td>
+                <input type="text" value="{{ data.value }}" class="setting-input" data-key="{{ data.key }}" />
+              </td>
+              <td>
+                <button class="btn btn-small btn-save" onclick="saveSetting('{{ data.key }}')">Сохранить</button>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endfor %}
+  </div>
+  <div id="no-settings" style="display: none; text-align: center; margin: 20px;">Нет доступных настроек.</div>
+</div>
+
+<script>
+let sections = {{ sections | tojson }};
+
+function loadSettings() {
+  document.getElementById('loading').style.display = 'block';
+  document.getElementById('settings-container').style.display = 'none';
+  document.getElementById('no-settings').style.display = 'none';
+  document.getElementById('error').style.display = 'none';
+
+  fetch('/api/v1/settings')
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to fetch settings`);
+      return res.json();
+    })
+    .then(data => {
+      // Update inputs with fetched data
+      Object.entries(data).forEach(([key, val]) => {
+        const input = document.querySelector(`input[data-key="${key}"]`);
+        if (input) input.value = val;
+      });
+      document.getElementById('settings-container').style.display = 'block';
+      document.getElementById('loading').style.display = 'none';
+    })
+    .catch(err => {
+      console.error('Settings fetch error:', err);
+      document.getElementById('error').textContent = 'Ошибка загрузки настроек: ' + err.message;
+      document.getElementById('error').style.display = 'block';
+      document.getElementById('loading').style.display = 'none';
+    });
+}
+
+function saveSetting(key) {
+  const input = document.querySelector(`input[data-key="${key}"]`);
+  const value = input.value.trim();
+  if (!value) {
+    alert('Значение не может быть пустым');
+    return;
+  }
+
+  fetch(`/api/v1/settings/${key}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value: value })
+  })
+  .then(res => {
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  })
+  .then(data => {
+    if (data.success) {
+      input.style.backgroundColor = '#d4edda';
+      setTimeout(() => { input.style.backgroundColor = ''; }, 1000);
+    } else {
+      throw new Error('Сохранение не удалось');
+    }
+  })
+  .catch(err => {
+    console.error('Save error:', err);
+    alert('Ошибка сохранения: ' + err.message);
+  });
+}
+
+// Auto-save on input change (debounced)
+let saveTimeout;
+document.addEventListener('input', (e) => {
+  if (e.target.classList.contains('setting-input')) {
+    const key = e.target.dataset.key;
+    clearTimeout(saveTimeout);
+    saveTimeout = setTimeout(() => saveSetting(key), 1000);
+  }
+});
+
+function exportConfig() {
+  fetch('/export_config', { method: 'POST' })
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    })
+    .then(data => {
+      if (data.success) {
+        alert('Конфигурация экспортирована в config.ini успешно!');
+      } else {
+        throw new Error('Экспорт не удался');
+      }
+    })
+    .catch(err => {
+      console.error('Export error:', err);
+      alert('Ошибка экспорта: ' + err.message);
+    });
+}
+
+function confirmRestart() {
+  if (confirm('Вы уверены, что хотите перезапустить бота? Это прервет все текущие операции.')) {
+    document.getElementById('restart-btn').textContent = 'Перезапуск...';
+    document.getElementById('restart-btn').disabled = true;
+
+    fetch('/api/v1/commands', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command_type: 'restart_bot' })
+    })
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    })
+    .then(data => {
+      if (data.id) {
+        alert('Команда перезапуска отправлена. Бот перезапустится в ближайшее время.');
+      } else {
+        throw new Error('Команда не отправлена');
+      }
+    })
+    .catch(err => {
+      console.error('Restart error:', err);
+      alert('Ошибка перезапуска: ' + err.message);
+      document.getElementById('restart-btn').textContent = 'Перезапуск бота';
+      document.getElementById('restart-btn').disabled = false;
+    });
+  }
+}
+
+document.getElementById('export-btn').addEventListener('click', exportConfig);
+
+// Initial load
+if (Object.keys(sections).length === 0) {
+  loadSettings();
+} else {
+  document.getElementById('settings-container').style.display = 'block';
+}
+
+// Refresh every 30s
+setInterval(loadSettings, 30000);
+</script>
+
+<style>
+.settings-page { max-width: 1200px; margin: 0 auto; padding: 20px; }
+.settings-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+.settings-actions { display: flex; gap: 10px; }
+.btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; }
+.btn-primary { background: #007bff; color: white; }
+.btn-danger { background: #dc3545; color: white; }
+.btn-small { padding: 4px 8px; font-size: 12px; }
+.settings-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+.settings-table th, .settings-table td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+.settings-table th { background: #f8f9fa; }
+.setting-input { width: 200px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; }
+</style>
 {% endblock %}

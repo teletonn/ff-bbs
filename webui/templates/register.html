@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="glass-card" style="max-width: 400px; margin: 50px auto;">
+    <h2>Регистрация</h2>
+    <form method="POST">
+        <div style="margin-bottom: 15px;">
+            <label for="username">Имя пользователя (3-20 символов):</label>
+            <input type="text" id="username" name="username" required minlength="3" maxlength="20">
+        </div>
+        <div style="margin-bottom: 15px;">
+            <label for="password">Пароль (минимум 6 символов):</label>
+            <input type="password" id="password" name="password" required minlength="6">
+        </div>
+        <div style="margin-bottom: 15px;">
+            <label for="nickname">Никнейм (опционально):</label>
+            <input type="text" id="nickname" name="nickname">
+        </div>
+        <div style="margin-bottom: 15px;">
+            <label for="email">Email (опционально):</label>
+            <input type="email" id="email" name="email">
+        </div>
+        <button type="submit">Зарегистрироваться</button>
+    </form>
+    <p style="text-align: center; margin-top: 15px;"><a href="/login">Уже есть аккаунт? Войти</a></p>
+</div>
+{% endblock %}

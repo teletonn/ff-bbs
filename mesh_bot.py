@@ -13,17 +13,80 @@ import time # for sleep, get some when you can :)
 import random
 import json
 import configparser
+import logging
 from modules.log import *
 from modules.system import *
+from webui import db_handler
+import json
+from datetime import datetime
+import math
 
 # --- Localization ---
+
+ACTIVE_GEOFENCES = []
+ACTIVE_TRIGGERS = {}
+ACTIVE_ZONES = []  # New zones table
+NODE_ZONES = {}
 config = configparser.ConfigParser()
 config.read('config.ini')
+
+# Commands configuration
+poll_interval = config.getint('commands', 'poll_interval', fallback=5)
+
+def handle_send_message(cmd):
+    params = json.loads(cmd['parameters'])
+    sender_user_id = cmd['sender_user_id']
+    user = db_handler.get_user(sender_user_id)
+    sender_node_id = user.get('node_id') if user else None
+    logging.info(f"Handling send_message from user {sender_user_id}, node_id {sender_node_id}, params {params}")
+    return send_message(params['message'], int(params.get('channel', 0)), int(params.get('target', 0)), 1)
+
+HANDLERS = {
+    'send_message': handle_send_message,
+    'restart_bot': lambda params: restart_bot(),
+    # New handlers for user groups, alerts, processes, zones
+    'create_user_group': lambda params: create_user_group(params),
+    'send_alert': lambda params: send_alert(params),
+    'create_process': lambda params: create_process(params),
+    'create_zone': lambda params: create_zone(params)
+}
+
+def restart_bot():
+    """Restart the bot process."""
+    # Optional: Save any state here
+    import os
+    import sys
+    os.execv(sys.executable, [sys.executable] + sys.argv)
+
+# Placeholder handlers for new features
+def create_user_group(params):
+    """Placeholder for creating user group."""
+    # TODO: Implement user group creation logic
+    logger.info(f"Creating user group: {params}")
+    pass
+
+def send_alert(params):
+    """Placeholder for sending alert."""
+    # TODO: Implement alert sending logic
+    logger.info(f"Sending alert: {params}")
+    pass
+
+def create_process(params):
+    """Placeholder for creating automated process."""
+    # TODO: Implement process creation logic
+    logger.info(f"Creating process: {params}")
+    pass
+
+def create_zone(params):
+    """Placeholder for creating zone."""
+    # TODO: Implement zone creation logic
+    logger.info(f"Creating zone: {params}")
+    pass
 
 try:
     language = config.get('localization', 'language')
 except (configparser.NoSectionError, configparser.NoOptionError):
-    language = 'en' # Default to English if not set
+    language = 'ru' # Default to English if not set
 
 # Load the language file
 try:
@@ -1096,6 +1159,33 @@ def handle_whoami(message_from_id, deviceID, hop, snr, rssi, pkiStatus):
         msg = _("whoami_error")
     return msg
 
+def remove_self_message(message_from_id, message_string, timestamp):
+    """Remove self-directed messages from the database to prevent loops."""
+    try:
+        # For self-messages, we need to find and delete the message that was sent to ourselves
+        # This could be a DM to own node or a broadcast that looped back
+        conn = db_handler.get_db_connection()
+        cursor = conn.cursor()
+
+        # Delete messages where from_node_id equals to_node_id (self DMs)
+        # or where the message matches our own sent messages (looped broadcasts)
+        cursor.execute("""
+            DELETE FROM messages
+            WHERE (from_node_id = to_node_id AND from_node_id = ?)
+               OR (from_node_id = ? AND text = ? AND timestamp >= ?)
+        """, (str(message_from_id), str(message_from_id), message_string, timestamp - 10))  # 10 second window
+
+        deleted_count = cursor.rowcount
+        if deleted_count > 0:
+            logger.info(f"Removed {deleted_count} self-message(s) from database to prevent loops")
+
+        conn.commit()
+    except Exception as e:
+        logger.error(f"Error removing self-message: {e}")
+    finally:
+        if 'conn' in locals():
+            conn.close()
+
 def handle_whois(message, deviceID, channel_number, message_from_id):
     #return data on a node name or number
     if  "?" in message:
@@ -1134,6 +1224,76 @@ def handle_whois(message, deviceID, channel_number, message_from_id):
                 if location != [latitudeValue, longitudeValue]:
                     msg += f"Loc: {where_am_i(str(location[0]), str(location[1]))}"
         return msg
+
+def load_geofences_and_triggers():
+    global ACTIVE_GEOFENCES, ACTIVE_TRIGGERS, ACTIVE_ZONES
+    try:
+        geofences = db_handler.get_geofences()
+        ACTIVE_GEOFENCES = [g for g in geofences if g.get('active', 0) == 1]
+        logger.debug(f"System: Loaded {len(ACTIVE_GEOFENCES)} active geofences")
+        # Load zones (new table, assuming get_zones added to db_handler)
+        try:
+            zones = db_handler.get_zones()
+            ACTIVE_ZONES = [z for z in zones if z.get('active', 0) == 1]
+            logger.debug(f"System: Loaded {len(ACTIVE_ZONES)} active zones")
+        except AttributeError:
+            ACTIVE_ZONES = []  # get_zones not implemented yet
+            logger.warning("System: get_zones not implemented in db_handler")
+        ACTIVE_TRIGGERS = {}
+        for gf in ACTIVE_GEOFENCES:
+            gf_id = gf['id']
+            triggers = db_handler.get_triggers()
+            active_trigs = [t for t in triggers if t.get('geofence_id') == gf_id and t.get('active', 0) == 1]
+            for t in active_trigs:
+                t['parameters'] = json.loads(t.get('parameters', '{}'))
+            ACTIVE_TRIGGERS[gf_id] = active_trigs
+        logger.info(f"Loaded geofences, zones, and triggers successfully: {len(ACTIVE_GEOFENCES)} geofences, {len(ACTIVE_TRIGGERS)} trigger sets")
+    except Exception as e:
+        logger.error(f"Failed to load geofences, zones, and triggers: {e}")
+        ACTIVE_GEOFENCES = []
+        ACTIVE_ZONES = []
+        ACTIVE_TRIGGERS = {}
+
+def haversine(lat1, lon1, lat2, lon2):
+    R = 6371000  # Earth radius in meters
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    delta_phi = math.radians(lat2 - lat1)
+    delta_lambda = math.radians(lon2 - lon1)
+    a = math.sin(delta_phi / 2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
+
+def is_in_zone(node_lat, node_lon, zone):
+    distance = haversine(node_lat, node_lon, zone['latitude'], zone['longitude'])
+    return distance <= zone['radius']
+
+def execute_triggers_for_zone(zone_id, node_id, condition):
+    triggers = ACTIVE_TRIGGERS.get(zone_id, [])
+    zone = next((z for z in ACTIVE_GEOFENCES if z['id'] == zone_id), None)
+    zone_name = zone['name'] if zone else 'Unknown'
+    for trigger in [t for t in triggers if t['condition'] == condition]:
+        action = trigger['action']
+        params = trigger['parameters']
+        if action == 'send_alert':
+            msg = params.get('message', f"{condition.title()}ed {zone_name}")
+            send_message(node_id, msg, 0, 1)  # Placeholder: adapt to existing send_message
+        # Add more placeholder actions as needed
+
+def check_and_execute_triggers(node_id, node_lat, node_lon):
+    global NODE_ZONES, ACTIVE_GEOFENCES, ACTIVE_TRIGGERS
+    previous_zones = NODE_ZONES.get(node_id, set())
+    current_zones = set()
+    for zone in ACTIVE_GEOFENCES:
+        if is_in_zone(node_lat, node_lon, zone):
+            current_zones.add(zone['id'])
+    entered = current_zones - previous_zones
+    exited = previous_zones - current_zones
+    for zone_id in entered:
+        execute_triggers_for_zone(zone_id, node_id, 'enter')
+    for zone_id in exited:
+        execute_triggers_for_zone(zone_id, node_id, 'exit')
+    NODE_ZONES[node_id] = current_zones
 
 def check_and_play_game(tracker, message_from_id, message_string, rxNode, channel_number, game_name, handle_game_func):
     global llm_enabled
@@ -1245,6 +1405,27 @@ def onReceive(packet, interface):
     # if message_from_id is not in the seenNodes list add it
     if not any(node['nodeID'] == message_from_id for node in seenNodes):
         seenNodes.append({'nodeID': message_from_id, 'rxInterface': rxNode, 'channel': channel_number, 'welcome': False, 'lastSeen': time.time()})
+        # Ensure node exists in database
+        try:
+            existing_node = db_handler.get_nodes()  # This gets all nodes, inefficient but works
+            node_exists = any(n['node_id'] == str(message_from_id) for n in existing_node)
+            if not node_exists:
+                name = get_name_from_number(message_from_id, 'long', rxNode)
+                db_handler.add_node(message_from_id, name, time.time(), None, None, None, None)
+                logger.debug(f"System: Added new node {message_from_id} to database")
+        except Exception as e:
+            logger.error(f"System: Failed to add new node {message_from_id} to database: {e}")
+
+    # Update last_seen for the node on every reception
+    for node in seenNodes:
+        if node['nodeID'] == message_from_id:
+            node['lastSeen'] = time.time()
+            # Update last_seen in database
+            try:
+                db_handler.update_node_last_seen(message_from_id)
+            except Exception as e:
+                logger.error(f"System: Failed to update last_seen for node {message_from_id}: {e}")
+            break
 
     # BBS DM MAIL CHECKER
     if bbs_enabled and 'decoded' in packet:
@@ -1266,18 +1447,46 @@ def onReceive(packet, interface):
             via_mqtt = packet['decoded'].get('viaMqtt', False)
             rx_time = packet['decoded'].get('rxTime', time.time())
 
+            # Save incoming text message to database
+            from_node_id = str(message_from_id)
+            to_id = packet.get('to', 0)
+            to_node_id = 'broadcast' if to_id == 0 else str(to_id)
+            channel = 'general' if channel_number == 0 else str(channel_number)
+            text = message_string
+            timestamp = int(time.time())
+            is_dm = 1 if to_id != 0 else 0
+            try:
+                db_handler.save_message(from_node_id, to_node_id, channel, text, timestamp, is_dm)
+                logger.debug(f"System: Saved message from {from_node_id} to {to_node_id} in channel {channel}")
+            except Exception as e:
+                logger.error(f"System: Failed to save message from {from_node_id}: {e}")
+
             # check if the packet is from us
             if message_from_id in [myNodeNum1, myNodeNum2, myNodeNum3, myNodeNum4, myNodeNum5, myNodeNum6, myNodeNum7, myNodeNum8, myNodeNum9]:
                 logger.warning(_("loop_detected", message_from_id=message_from_id))
+                # Remove self-message from send queue to prevent infinite loops
+                remove_self_message(message_from_id, message_string, timestamp)
+                return
 
             # get the signal strength and snr if available
+            hop_count = 0
             if packet.get('rxSnr') or packet.get('rxRssi'):
                 snr = packet.get('rxSnr', 0)
                 rssi = packet.get('rxRssi', 0)
+                # Update telemetry data
+                try:
+                    db_handler.update_node_telemetry(message_from_id, snr=snr, rssi=rssi, hop_count=hop_count)
+                except Exception as e:
+                    logger.error(f"System: Failed to update telemetry for node {message_from_id}: {e}")
 
             # check if the packet has a publicKey flag use it
             if packet.get('publicKey'):
                 pkiStatus = packet.get('pkiEncrypted', False), packet.get('publicKey', 'ABC')
+                # Update PKI status in telemetry
+                try:
+                    db_handler.update_node_telemetry(message_from_id, pki_status=str(pkiStatus[1]))
+                except Exception as e:
+                    logger.error(f"System: Failed to update PKI status for node {message_from_id}: {e}")
             
             # check if the packet has replyId flag // currently unused in the code
             if packet.get('replyId'):
@@ -1467,6 +1676,31 @@ def onReceive(packet, interface):
         else:
             # Evaluate non TEXT_MESSAGE_APP packets
             consumeMetadata(packet, rxNode)
+            # Check for position packets
+            if 'decoded' in packet and 'position' in packet['decoded']:
+                pos = packet['decoded']['position']
+                lat = pos.get('latitude', 0)
+                lon = pos.get('longitude', 0)
+                if lat != 0 and lon != 0:  # Valid position
+                    # Persist node metadata to database
+                    name = get_name_from_number(message_from_id, 'long', rxNode)
+                    battery = pos.get('batteryLevel')
+                    altitude = pos.get('altitude', 0)
+                    ground_speed = pos.get('groundSpeed')
+                    precision_bits = pos.get('precisionBits')
+                    try:
+                        db_handler.update_node_last_seen(message_from_id)
+                        db_handler.update_node(message_from_id, name=name, battery_level=battery, latitude=lat, longitude=lon, altitude=altitude)
+                        # Update telemetry data
+                        db_handler.update_node_telemetry(
+                            message_from_id,
+                            ground_speed=ground_speed,
+                            precision_bits=precision_bits
+                        )
+                        logger.debug(f"System: Updated node {message_from_id} position: {lat},{lon}")
+                    except Exception as e:
+                        logger.error(f"System: Failed to update node {message_from_id} position: {e}")
+                    check_and_execute_triggers(message_from_id, lat, lon)
     except KeyError as e:
         logger.critical(f"System: Error processing packet: {e} Device:{rxNode}")
         logger.debug(f"System: Error Packet = {packet}")
@@ -1478,11 +1712,27 @@ async def start_rx():
     pub.subscribe(onReceive, 'meshtastic.receive')
     pub.subscribe(onDisconnect, 'meshtastic.connection.lost')
 
+    global db_conn
+    db_conn = db_handler.get_db_connection()
+
     for i in range(1, 10):
         if globals().get(f'interface{i}_enabled', False):
             myNodeNum = globals().get(f'myNodeNum{i}', 0)
             logger.info(_("autostart_message", device_id=i, long_name=get_name_from_number(myNodeNum, 'long', i), short_name=get_name_from_number(myNodeNum, 'short', i), node_num=myNodeNum, hex_id=decimal_to_hex(myNodeNum)))
-    
+
+    # Resend undelivered messages to online nodes at startup
+    try:
+        all_nodes = db_handler.get_nodes()
+        online_nodes = [n for n in all_nodes if n.get('is_online', 0) == 1]
+        if online_nodes:
+            logger.info(f"System: Checking for undelivered messages to {len(online_nodes)} online nodes at startup")
+            for node in online_nodes:
+                resend_undelivered_messages(node['node_id'])
+        else:
+            logger.debug("System: No online nodes found at startup for message resend")
+    except Exception as e:
+        logger.error(f"System: Error during startup message resend: {e}")
+
     if llm_enabled:
         logger.debug(_("llm_model_loading", llm_model=llmModel))
         llmLoad = llm_query(" ")
@@ -1651,16 +1901,119 @@ async def start_rx():
         await asyncio.sleep(0.5)
         pass
 
-# Hello World 
+# Hello World
+async def reload_task():
+    while True:
+        await asyncio.sleep(1800)  # 30 minutes
+        load_geofences_and_triggers()
+
+async def command_poller():
+    """Poll and process pending commands."""
+    while True:
+        try:
+            cmds = db_handler.poll_pending_commands()
+            logging.debug(f"Command poller found {len(cmds)} pending commands")
+            for cmd in cmds:
+                max_retries = 5  # Increased from 3
+                for attempt in range(max_retries):
+                    conn = db_handler.get_db_connection()
+                    start_time = time.time()
+                    try:
+                        logging.debug(f"Starting transaction for command {cmd['id']} (attempt {attempt + 1})")
+                        # Use BEGIN DEFERRED instead of BEGIN IMMEDIATE to reduce lock conflicts
+                        conn.execute("BEGIN DEFERRED")
+                        cursor = conn.cursor()
+
+                        handler = HANDLERS.get(cmd['command_type'])
+                        if handler:
+                            result = handler(cmd)
+                            db_handler.update_command_status(cmd['id'], 'executed', str(result), datetime.now().isoformat())
+                            logging.info(f"Command {cmd['id']} executed successfully")
+                        else:
+                            db_handler.update_command_status(cmd['id'], 'failed', 'Unknown command type')
+                            logging.warning(f"Unknown command type: {cmd['command_type']}")
+
+                        conn.commit()
+                        transaction_time = time.time() - start_time
+                        logging.debug(f"Command {cmd['id']} transaction completed in {transaction_time:.3f}s")
+                        break  # Success, exit retry loop
+                    except Exception as e:
+                        conn.rollback()
+                        transaction_time = time.time() - start_time
+                        error_str = str(e)
+                        if "database is locked" in error_str.lower() and attempt < max_retries - 1:
+                            # Increased backoff delay
+                            delay = min(0.2 * (2 ** attempt), 3.0)  # 0.2, 0.4, 0.8, 1.6, 3.0
+                            logging.warning(f"Command {cmd['id']} failed due to database lock after {transaction_time:.3f}s, retrying in {delay:.2f}s (attempt {attempt + 1}/{max_retries})")
+                            await asyncio.sleep(delay)
+                            continue
+                        else:
+                            db_handler.update_command_status(cmd['id'], 'failed', f"Execution error: {error_str}")
+                            logging.error(f"Command {cmd['id']} failed after {transaction_time:.3f}s: {e}")
+                            break  # Final failure or non-lock error
+                    finally:
+                        conn.close()
+
+            await asyncio.sleep(poll_interval)
+        except Exception as e:
+            logging.error(f"Error in command poller: {e}")
+            await asyncio.sleep(poll_interval)
+
+
+async def cleanup_task():
+    """Daily cleanup of old commands."""
+    while True:
+        try:
+            await asyncio.sleep(86400)  # 24 hours
+            deleted = db_handler.cleanup_old_commands(7)
+            logging.info(f"Cleaned up {deleted} old commands")
+        except Exception as e:
+            logging.error(f"Error in cleanup task: {e}")
+
+
+async def node_status_check_task():
+    """Periodic check for offline nodes every 5 minutes."""
+    while True:
+        try:
+            await asyncio.sleep(300)  # 5 minutes
+            db_handler.check_and_update_offline_nodes()
+            logging.debug("Performed periodic node status check")
+        except Exception as e:
+            logging.error(f"Error in node status check task: {e}")
+
+
+async def message_resend_task():
+    """Periodic check for undelivered messages and attempt resend to online recipients every 30 seconds."""
+    while True:
+        try:
+            await asyncio.sleep(30)  # 30 seconds
+            all_nodes = db_handler.get_nodes()
+            online_nodes = [n for n in all_nodes if n.get('is_online', 0) == 1]
+            if online_nodes:
+                logging.debug(f"System: Checking for undelivered messages to {len(online_nodes)} online nodes")
+                for node in online_nodes:
+                    resend_undelivered_messages(node['node_id'])
+            else:
+                logging.debug("System: No online nodes found for periodic message resend")
+        except Exception as e:
+            logging.error(f"Error in message resend task: {e}")
+
+
 async def main():
+    load_geofences_and_triggers()
     meshRxTask = asyncio.create_task(start_rx())
     watchdogTask = asyncio.create_task(watchdog())
+    commandPollerTask = asyncio.create_task(command_poller())
+    cleanupTask = asyncio.create_task(cleanup_task())
+    reloadTask = asyncio.create_task(reload_task())
     if file_monitor_enabled:
         fileMonTask: asyncio.Task = asyncio.create_task(handleFileWatcher())
     if radio_detection_enabled:
         hamlibTask = asyncio.create_task(handleSignalWatcher())
 
-    await asyncio.gather(meshRxTask, watchdogTask)
+    nodeStatusTask = asyncio.create_task(node_status_check_task())
+    messageResendTask = asyncio.create_task(message_resend_task())
+    await asyncio.gather(meshRxTask, watchdogTask, commandPollerTask, cleanupTask, reloadTask, nodeStatusTask, messageResendTask)
     if radio_detection_enabled:
         await asyncio.gather(hamlibTask)
     if file_monitor_enabled:

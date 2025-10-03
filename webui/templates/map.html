@@ -1,5 +1,746 @@
 {% extends "base.html" %}
 
 {% block content %}
-<p>Здесь будет отображаться интерактивная карта с местоположением всех узлов сети, имеющих GPS. Будет возможность просматривать треки движения, а также строить маршруты между узлами на основе сохраненных данных.</p>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+<style>
+.marker-label {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  padding: 2px 5px;
+  font-size: 11px;
+  font-weight: bold;
+  text-align: center;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  white-space: nowrap;
+}
+.custom-marker {
+  border: none !important;
+  background: none !important;
+}
+.map-node-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px;
+  margin-bottom: 4px;
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 4px;
+  border: 1px solid #ddd;
+}
+.node-info {
+  flex: 1;
+}
+.node-actions {
+  display: flex;
+  gap: 4px;
+}
+.node-actions button {
+  padding: 4px 8px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  background: #f8f9fa;
+  cursor: pointer;
+  font-size: 12px;
+}
+.node-actions button:hover {
+  background: #e9ecef;
+}
+
+/* Modal styles */
+.modal {
+  display: none;
+  position: fixed;
+  z-index: 1000;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+}
+
+.modal-content {
+  background: rgba(255, 255, 255, 0.25);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  margin: 5% auto;
+  padding: 20px;
+  width: 90%;
+  max-width: 600px;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+  color: #333;
+}
+
+.close {
+  color: #aaa;
+  float: right;
+  font-size: 28px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.close:hover {
+  color: black;
+}
+</style>
+<div id="loading" style="text-align: center; margin: 20px;">Загрузка данных карты...</div>
+
+<!-- Route Filter Controls -->
+<div id="route-filters" style="background: #f8f9fa; padding: 10px; margin-bottom: 10px; border-radius: 5px; border: 1px solid #dee2e6;">
+  <div style="display: flex; flex-wrap: wrap; gap: 15px; align-items: center;">
+    <label style="display: flex; align-items: center; gap: 5px;">
+      <input type="checkbox" id="showRoutes" style="margin: 0;">
+      <span>Показать маршруты</span>
+    </label>
+
+    <div style="display: flex; gap: 10px; align-items: center;">
+      <span>Узлы:</span>
+      <label style="display: flex; align-items: center; gap: 3px;">
+        <input type="radio" name="nodeFilter" value="all" checked style="margin: 0;">
+        <span>Все</span>
+      </label>
+      <label style="display: flex; align-items: center; gap: 3px;">
+        <input type="radio" name="nodeFilter" value="single" style="margin: 0;">
+        <span>Один узел</span>
+      </label>
+    </div>
+
+    <div style="display: flex; gap: 5px; align-items: center;">
+      <label for="timeFilter">Время:</label>
+      <select id="timeFilter" style="padding: 2px 5px; border: 1px solid #ccc; border-radius: 3px;">
+        <option value="1">1 час</option>
+        <option value="12">12 часов</option>
+        <option value="24" selected>24 часа</option>
+        <option value="168">1 неделя</option>
+        <option value="0">Все время</option>
+      </select>
+    </div>
+
+    <div id="nodeSelector" style="display: none;">
+      <label for="selectedNode">Выберите узел:</label>
+      <select id="selectedNode" style="padding: 2px 5px; border: 1px solid #ccc; border-radius: 3px;">
+        <option value="">-- Выберите узел --</option>
+      </select>
+    </div>
+  </div>
+</div>
+
+<div id="map-container" style="position: relative;">
+  <div id="map" style="width: 100%; height: 600px;"></div>
+  <div id="no-coords-msg" style="display: none; position: absolute; z-index: 1; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(255,255,255,0.9); padding: 20px; text-align: center; border-radius: 5px;">Узлы с координатами недоступны</div>
+  <ul id="map-list" style="list-style: none; padding: 0; margin-top: 10px;">
+  </ul>
+</div>
+<div id="no-map-data" style="display: none; text-align: center; margin: 20px;">Узлы недоступны</div>
+<div id="error" style="display: none; color: red; margin-top: 10px;">Ошибка загрузки данных карты</div>
+
+<script>
+function formatTimestamp(timestamp) {
+  if (!timestamp || timestamp === 'N/A') return 'N/A';
+  let date;
+  if (typeof timestamp === 'string') {
+    date = new Date(timestamp);
+  } else if (typeof timestamp === 'number') {
+    // Assume Unix timestamp: if > 1e10, milliseconds, else seconds
+    date = new Date(timestamp > 1e10 ? timestamp : timestamp * 1000);
+  } else {
+    return 'N/A';
+  }
+  if (isNaN(date.getTime())) return 'N/A';
+  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const year = date.getFullYear();
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  const seconds = String(date.getSeconds()).padStart(2, '0');
+  return `${day}.${month}.${year} ${hours}:${minutes}:${seconds}`;
+}
+
+let map;
+let nodeLayer, userLayer, zoneLayer, routeLayer;
+let currentRoutes = [];
+let currentFilters = {
+  showRoutes: false,
+  nodeFilter: 'all',
+  timeFilter: 24,
+  selectedNode: null
+};
+
+function initMap() {
+  map = L.map('map').setView([45.0355, 38.9753], 12);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors'
+  }).addTo(map);
+
+  // Create layer groups for markers
+  nodeLayer = L.layerGroup().addTo(map);
+  userLayer = L.layerGroup().addTo(map);
+  zoneLayer = L.layerGroup().addTo(map);
+  routeLayer = L.layerGroup().addTo(map);
+
+  console.log('Map initialized');
+}
+
+async function loadMapData() {
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('no-map-data').style.display = 'none';
+  document.getElementById('error').style.display = 'none';
+  document.getElementById('no-coords-msg').style.display = 'none';
+
+  const list = document.getElementById('map-list');
+  list.innerHTML = '';
+
+  try {
+    // Load nodes
+    const nodesRes = await fetch('/api/v1/nodes');
+    if (!nodesRes.ok) {
+      throw new Error(`HTTP ${nodesRes.status}: ${nodesRes.statusText}`);
+    }
+    const nodes = await nodesRes.json();
+
+    // Load users
+    const usersRes = await fetch('/api/v1/users');
+    const users = usersRes.ok ? await usersRes.json() : [];
+
+    // Load zones
+    const zonesRes = await fetch('/api/v1/zones');
+    const zones = zonesRes.ok ? await zonesRes.json() : [];
+
+    // Update list
+    nodes.forEach(function(node) {
+      const li = document.createElement('li');
+      li.className = 'map-node-card';
+
+      // Determine status emoji
+      let statusEmoji = '🔴'; // red for offline
+      if (node.is_online) {
+        if (node.ground_speed && node.ground_speed > 0) {
+          statusEmoji = '🔵'; // blue for moving
+        } else {
+          statusEmoji = '🟢'; // green for online stationary
+        }
+      } else if (node.last_seen) {
+        const lastSeen = new Date(node.last_seen);
+        const now = new Date();
+        const hoursSinceLastSeen = (now - lastSeen) / (1000 * 60 * 60);
+        if (hoursSinceLastSeen < 24) {
+          statusEmoji = '🟠'; // orange for recently seen
+        } else {
+          statusEmoji = '⚫'; // gray for fixed/offline
+        }
+      }
+
+      li.innerHTML = `
+        <div class="node-info">
+          <strong>${statusEmoji} Узел:</strong> ${node.name || 'Неизвестный'} на широте ${node.lat || 'N/A'}, долготе ${node.lng || 'N/A'}
+        </div>
+        <div class="node-actions">
+          <button onclick="showOnMap('${node.id}')" title="Показать на карте">📍</button>
+          <button onclick="sendMessage('${node.id}')" title="Отправить сообщение">💬</button>
+          <button onclick="traceRoute('${node.id}')" title="Трассировка">🔍</button>
+          <button onclick="showRoute('${node.id}')" title="Маршрут">🛤️</button>
+        </div>
+      `;
+      list.appendChild(li);
+    });
+
+    users.forEach(function(user) {
+      if (user.node_id) {
+        const li = document.createElement('li');
+        li.className = 'map-node-card';
+        li.innerHTML = `<strong>👤 Пользователь:</strong> ${user.username} (Узел: ${user.node_id})`;
+        list.appendChild(li);
+      }
+    });
+
+    zones.forEach(function(zone) {
+      const li = document.createElement('li');
+      li.className = 'map-node-card';
+      li.innerHTML = `<strong>🏠 Зона:</strong> ${zone.name} (${zone.active ? 'Активна' : 'Неактивна'})`;
+      list.appendChild(li);
+    });
+
+    // Clear existing markers and routes
+    nodeLayer.clearLayers();
+    userLayer.clearLayers();
+    zoneLayer.clearLayers();
+    routeLayer.clearLayers();
+
+    // Process nodes for map
+    const validNodes = nodes.filter(function(node) {
+      const lat = parseFloat(node.lat);
+      const lng = parseFloat(node.lng);
+      return !isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+    });
+
+    validNodes.forEach(function(node) {
+      // Determine status color based on online status, last seen time, and movement
+      let markerColor = '#ff4757'; // red for offline
+      let isMoving = false;
+
+      if (node.is_online) {
+        // Check if node is moving (ground_speed > 0 or recent location changes)
+        if (node.ground_speed && node.ground_speed > 0) {
+          markerColor = '#3742fa'; // blue for moving
+          isMoving = true;
+        } else {
+          markerColor = '#2ed573'; // green for online but stationary
+        }
+      } else if (node.last_seen) {
+        const lastSeen = new Date(node.last_seen);
+        const now = new Date();
+        const hoursSinceLastSeen = (now - lastSeen) / (1000 * 60 * 60);
+        if (hoursSinceLastSeen < 24) {
+          markerColor = '#ffa502'; // orange for recently seen but offline
+        } else {
+          markerColor = '#636e72'; // gray for fixed/offline
+        }
+      } else {
+        markerColor = '#636e72'; // gray for unknown status
+      }
+
+      // Create custom icon with color
+      const customIcon = L.divIcon({
+        className: 'custom-marker',
+        html: `<div style="background-color: ${markerColor}; border: 2px solid white; border-radius: 50%; width: 20px; height: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>`,
+        iconSize: [20, 20],
+        iconAnchor: [10, 10]
+      });
+
+      const marker = L.marker([parseFloat(node.lat), parseFloat(node.lng)], { icon: customIcon, nodeId: node.id });
+
+      // Add permanent label
+      const labelText = (node.name || 'Неизвестный') + '<br>' + formatTimestamp(node.last_seen);
+      marker.bindTooltip(labelText, {
+        permanent: true,
+        direction: 'top',
+        offset: [0, -10],
+        className: 'marker-label'
+      });
+
+      marker.bindPopup(
+        '<h3 style="color: #333; margin-bottom: 10px; font-size: 1.1em; font-weight: 600;">📡 ' + (node.name || 'Неизвестный узел') + '</h3>' +
+        '<p style="color: #333; margin: 5px 0; line-height: 1.4;"><strong>ID:</strong> ' + node.id + '</p>' +
+        '<p style="color: #333; margin: 5px 0; line-height: 1.4;"><strong>Последний раз:</strong> ' + formatTimestamp(node.last_seen) + '</p>' +
+        '<p style="color: #333; margin: 5px 0; line-height: 1.4;"><strong>Уровень батареи:</strong> ' + (node.battery_level || 'N/A') + '%</p>' +
+        '<p style="color: #333; margin: 5px 0; line-height: 1.4;"><strong>Статус:</strong> ' + (node.is_online ? 'Онлайн' : 'Офлайн') + '</p>'
+      );
+      nodeLayer.addLayer(marker);
+    });
+
+    // Process users for map (assuming they have location data)
+    const validUsers = users.filter(function(user) {
+      // For now, we'll assume users don't have direct location data
+      // This could be extended to show user locations if available
+      return false;
+    });
+
+    validUsers.forEach(function(user) {
+      const marker = L.marker([parseFloat(user.lat), parseFloat(user.lng)])
+        .bindPopup(
+          '<h3 style="color: #333; margin-bottom: 10px; font-size: 1.1em; font-weight: 600;">👤 ' + (user.username || 'Неизвестный пользователь') + '</h3>' +
+          '<p style="color: #333; margin: 5px 0; line-height: 1.4;"><strong>ID узла:</strong> ' + (user.node_id || 'N/A') + '</p>' +
+          '<p style="color: #333; margin: 5px 0; line-height: 1.4;"><strong>Последний раз:</strong> ' + formatTimestamp(user.last_seen) + '</p>'
+        );
+      userLayer.addLayer(marker);
+    });
+
+    // Process zones for map
+    const validZones = zones.filter(function(zone) {
+      return zone.latitude && zone.longitude && zone.active;
+    });
+
+    validZones.forEach(function(zone) {
+      const circle = L.circle([parseFloat(zone.latitude), parseFloat(zone.longitude)], {
+        radius: zone.radius,
+        color: '#ff4757',
+        fillColor: '#ff6b6b',
+        fillOpacity: 0.3,
+        weight: 2
+      }).bindPopup(
+        '<h3 style="color: #333; margin-bottom: 10px; font-size: 1.1em; font-weight: 600;">🏠 ' + (zone.name || 'Неизвестная зона') + '</h3>' +
+        '<p style="color: #333; margin: 5px 0; line-height: 1.4;"><strong>Радиус:</strong> ' + (zone.radius || 0) + ' метров</p>' +
+        '<p style="color: #333; margin: 5px 0; line-height: 1.4;"><strong>Описание:</strong> ' + (zone.description || 'N/A') + '</p>' +
+        '<p style="color: #333; margin: 5px 0; line-height: 1.4;"><strong>Активна:</strong> ' + (zone.active ? 'Да' : 'Нет') + '</p>'
+      );
+      zoneLayer.addLayer(circle);
+    });
+
+    const hasValidData = validNodes.length > 0 || validUsers.length > 0 || validZones.length > 0;
+    if (!hasValidData) {
+      document.getElementById('no-coords-msg').style.display = 'block';
+    }
+
+    if (nodes.length === 0 && users.length === 0 && zones.length === 0) {
+      document.getElementById('no-map-data').style.display = 'block';
+    }
+  } catch (err) {
+    console.error('Ошибка загрузки данных карты:', err);
+    document.getElementById('error').style.display = 'block';
+    document.getElementById('error').textContent = 'Ошибка загрузки данных карты: ' + err.message;
+  }
+}
+
+// Load route data and display on map
+async function loadRoutes() {
+  if (!currentFilters.showRoutes) {
+    routeLayer.clearLayers();
+    return;
+  }
+
+  try {
+    const params = new URLSearchParams({
+      hours: currentFilters.timeFilter
+    });
+
+    if (currentFilters.nodeFilter === 'single' && currentFilters.selectedNode) {
+      params.append('node_id', currentFilters.selectedNode);
+    }
+
+    const response = await fetch(`/api/v1/routes?${params}`);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const routes = await response.json();
+    routeLayer.clearLayers();
+
+    routes.forEach(function(route) {
+      if (route.points && route.points.length > 0) {
+        // Sort points by timestamp
+        route.points.sort((a, b) => a.timestamp - b.timestamp);
+
+        // Filter valid points
+        const validPoints = route.points.filter(point => {
+          const lat = parseFloat(point.lat);
+          const lng = parseFloat(point.lng);
+          return !isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+        });
+
+        if (validPoints.length > 1) {
+          const latlngs = validPoints.map(point => [parseFloat(point.lat), parseFloat(point.lng)]);
+          const routeColor = getRandomColor();
+
+          const polyline = L.polyline(latlngs, {
+            color: routeColor,
+            weight: 3,
+            opacity: 0.7
+          });
+
+          // Add start marker
+          const startPoint = validPoints[0];
+          const startMarker = L.marker([parseFloat(startPoint.lat), parseFloat(startPoint.lng)], {
+            icon: L.divIcon({
+              className: 'route-marker start-marker',
+              html: '<div style="background-color: #2ed573; border: 2px solid white; border-radius: 50%; width: 12px; height: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>',
+              iconSize: [12, 12],
+              iconAnchor: [6, 6]
+            })
+          }).bindPopup(`<strong>Начало маршрута</strong><br>${route.name}<br>${formatTimestamp(startPoint.timestamp)}`);
+
+          // Add end marker
+          const endPoint = validPoints[validPoints.length - 1];
+          const endMarker = L.marker([parseFloat(endPoint.lat), parseFloat(endPoint.lng)], {
+            icon: L.divIcon({
+              className: 'route-marker end-marker',
+              html: '<div style="background-color: #ff4757; border: 2px solid white; border-radius: 50%; width: 12px; height: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>',
+              iconSize: [12, 12],
+              iconAnchor: [6, 6]
+            })
+          }).bindPopup(`<strong>Конец маршрута</strong><br>${route.name}<br>${formatTimestamp(endPoint.timestamp)}`);
+
+          // Add popup with route info
+          polyline.bindPopup(
+            `<h4>${route.name}</h4>` +
+            `<p>Точек: ${validPoints.length}</p>` +
+            `<p>Последний сигнал: ${formatTimestamp(route.last_seen)}</p>`
+          );
+
+          routeLayer.addLayer(polyline);
+          routeLayer.addLayer(startMarker);
+          routeLayer.addLayer(endMarker);
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error loading routes:', error);
+  }
+}
+
+// Generate random color for routes
+function getRandomColor() {
+  const colors = ['#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', '#1abc9c', '#e67e22', '#34495e'];
+  return colors[Math.floor(Math.random() * colors.length)];
+}
+
+// Handle filter changes
+function handleFilterChange() {
+  const showRoutes = document.getElementById('showRoutes').checked;
+  const nodeFilter = document.querySelector('input[name="nodeFilter"]:checked').value;
+  const timeFilter = parseInt(document.getElementById('timeFilter').value);
+  const selectedNode = document.getElementById('selectedNode').value;
+
+  currentFilters = {
+    showRoutes: showRoutes,
+    nodeFilter: nodeFilter,
+    timeFilter: timeFilter,
+    selectedNode: selectedNode
+  };
+
+  // Show/hide node selector
+  const nodeSelector = document.getElementById('nodeSelector');
+  nodeSelector.style.display = nodeFilter === 'single' ? 'block' : 'none';
+
+  loadRoutes();
+}
+
+// Populate node selector
+async function populateNodeSelector() {
+  try {
+    const response = await fetch('/api/v1/nodes');
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const nodes = await response.json();
+    const select = document.getElementById('selectedNode');
+    select.innerHTML = '<option value="">-- Выберите узел --</option>';
+
+    nodes.forEach(function(node) {
+      const option = document.createElement('option');
+      option.value = node.id;
+      option.textContent = node.name || `Node ${node.id}`;
+      select.appendChild(option);
+    });
+
+    // Set default selected node if there are nodes
+    if (nodes.length > 0) {
+      currentFilters.selectedNode = nodes[0].id;
+      select.value = nodes[0].id;
+    }
+  } catch (error) {
+    console.error('Error populating node selector:', error);
+  }
+}
+
+// Initialize map and load data when the page loads
+document.addEventListener('DOMContentLoaded', async function() {
+  initMap();
+  loadMapData();
+  await populateNodeSelector();
+
+  // Set up filter event listeners
+  document.getElementById('showRoutes').addEventListener('change', handleFilterChange);
+  document.querySelectorAll('input[name="nodeFilter"]').forEach(radio => {
+    radio.addEventListener('change', handleFilterChange);
+  });
+  document.getElementById('timeFilter').addEventListener('change', handleFilterChange);
+  document.getElementById('selectedNode').addEventListener('change', handleFilterChange);
+
+// Action button functions
+function showOnMap(nodeId) {
+  // Find the node marker and center the map on it
+  nodeLayer.eachLayer(function(layer) {
+    if (layer.options.nodeId === nodeId) {
+      map.setView(layer.getLatLng(), 15);
+      layer.openPopup();
+      return false; // break out of eachLayer
+    }
+  });
+}
+
+function sendMessage(nodeId) {
+  // Create and show message modal
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  modal.innerHTML = `
+    <div class="modal-content">
+      <span class="close" onclick="this.closest('.modal').remove()">&times;</span>
+      <h3>Отправить сообщение узлу ${nodeId}</h3>
+      <form id="messageForm">
+        <div style="margin-bottom: 10px;">
+          <label for="messageText">Сообщение:</label><br>
+          <textarea id="messageText" rows="4" cols="50" maxlength="500" required></textarea>
+        </div>
+        <div style="margin-bottom: 10px;">
+          <label>
+            <input type="radio" name="messageType" value="dm" checked> Личное сообщение
+          </label>
+          <label>
+            <input type="radio" name="messageType" value="channel"> Канал
+          </label>
+        </div>
+        <div id="channelSelect" style="display: none; margin-bottom: 10px;">
+          <label for="channel">Канал:</label>
+          <select id="channel" required>
+            <option value="">Выберите канал</option>
+          </select>
+        </div>
+        <button type="submit">Отправить</button>
+      </form>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  // Load channels for channel selection
+  fetch('/api/v1/channels')
+    .then(response => response.json())
+    .then(channels => {
+      const select = modal.querySelector('#channel');
+      channels.forEach(channel => {
+        const option = document.createElement('option');
+        option.value = channel;
+        option.textContent = channel;
+        select.appendChild(option);
+      });
+    });
+
+  // Handle message type change
+  modal.querySelectorAll('input[name="messageType"]').forEach(radio => {
+    radio.addEventListener('change', function() {
+      const channelSelect = modal.querySelector('#channelSelect');
+      channelSelect.style.display = this.value === 'channel' ? 'block' : 'none';
+    });
+  });
+
+  // Handle form submission
+  modal.querySelector('#messageForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    const messageText = modal.querySelector('#messageText').value;
+    const messageType = modal.querySelector('input[name="messageType"]:checked').value;
+    const channel = modal.querySelector('#channel').value;
+
+    const payload = {
+      mode: messageType,
+      recipient: messageType === 'dm' ? nodeId : channel,
+      message: messageText
+    };
+
+    fetch('/api/v1/messages/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    .then(response => response.json())
+    .then(data => {
+      if (data.success) {
+        alert('Сообщение отправлено успешно');
+        modal.remove();
+      } else {
+        alert('Ошибка отправки сообщения');
+      }
+    })
+    .catch(error => {
+      console.error('Error sending message:', error);
+      alert('Ошибка отправки сообщения');
+    });
+  });
+
+  // Show modal
+  modal.style.display = 'block';
+}
+
+function traceRoute(nodeId) {
+  // Show trace route modal with detailed route information
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  modal.innerHTML = `
+    <div class="modal-content" style="max-width: 800px;">
+      <span class="close" onclick="this.closest('.modal').remove()">&times;</span>
+      <h3>Трассировка маршрута узла ${nodeId}</h3>
+      <div id="traceContent">
+        <p>Загрузка данных трассировки...</p>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+  modal.style.display = 'block';
+
+  // Load detailed route data
+  fetch(`/api/v1/routes?node_id=${nodeId}&hours=24`)
+    .then(response => response.json())
+    .then(routes => {
+      const content = modal.querySelector('#traceContent');
+      if (routes.length === 0) {
+        content.innerHTML = '<p>Нет данных о маршруте для этого узла.</p>';
+        return;
+      }
+
+      const route = routes[0];
+      let html = `<h4>Маршрут: ${route.name}</h4>`;
+      html += `<p>Всего точек: ${route.points.length}</p>`;
+      html += `<p>Последний сигнал: ${formatTimestamp(route.last_seen)}</p>`;
+
+      if (route.points.length > 0) {
+        html += '<h5>Точки маршрута:</h5><ul>';
+        route.points.forEach((point, index) => {
+          html += `<li>Точка ${index + 1}: ${point.lat.toFixed(6)}, ${point.lng.toFixed(6)} - ${formatTimestamp(point.timestamp)}</li>`;
+        });
+        html += '</ul>';
+      }
+
+      content.innerHTML = html;
+    })
+    .catch(error => {
+      console.error('Error loading trace data:', error);
+      modal.querySelector('#traceContent').innerHTML = '<p>Ошибка загрузки данных трассировки.</p>';
+    });
+}
+
+function showRoute(nodeId) {
+  // Show 24h route on map by temporarily filtering to this node only
+  const originalFilters = { ...currentFilters };
+
+  // Set filters to show only this node's route
+  currentFilters.showRoutes = true;
+  currentFilters.nodeFilter = 'single';
+  currentFilters.selectedNode = nodeId;
+  currentFilters.timeFilter = 24;
+
+  // Update UI to reflect new filters
+  document.getElementById('showRoutes').checked = true;
+  document.querySelector('input[name="nodeFilter"][value="single"]').checked = true;
+  document.getElementById('timeFilter').value = '24';
+  document.getElementById('selectedNode').value = nodeId;
+  document.getElementById('nodeSelector').style.display = 'block';
+
+  // Load and display the route
+  loadRoutes();
+
+  // Center map on the route
+  setTimeout(() => {
+    if (routeLayer.getLayers().length > 0) {
+      const group = new L.featureGroup(routeLayer.getLayers());
+      map.fitBounds(group.getBounds().pad(0.1));
+    }
+  }, 500);
+
+  // Reset filters after 10 seconds
+  setTimeout(() => {
+    currentFilters = { ...originalFilters };
+    // Update UI to reflect original filters
+    document.getElementById('showRoutes').checked = originalFilters.showRoutes;
+    document.querySelector(`input[name="nodeFilter"][value="${originalFilters.nodeFilter}"]`).checked = true;
+    document.getElementById('timeFilter').value = originalFilters.timeFilter;
+    document.getElementById('selectedNode').value = originalFilters.selectedNode;
+    document.getElementById('nodeSelector').style.display = originalFilters.nodeFilter === 'single' ? 'block' : 'none';
+    loadRoutes();
+  }, 10000);
+}
+
+// Utility function to scroll modal into view
+function scrollModalIntoView(modal) {
+  if (modal) {
+    modal.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+}
+  setInterval(loadMapData, 10000);
+});
+</script>
 {% endblock %}

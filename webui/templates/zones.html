@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Modal for creating/editing zone -->
+<div id="editModal" style="display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5);">
+  <div style="background-color: white; margin: 15% auto; padding: 20px; border: 1px solid #888; width: 80%; max-width: 500px; border-radius: 8px;">
+    <span id="closeEditModal" style="color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer;">&times;</span>
+    <h2 id="modalTitle">Создать гео-зону</h2>
+    <form id="editForm">
+      <input type="hidden" id="editZoneId" name="id">
+      <div style="margin-bottom: 15px;">
+        <label for="editName">Имя:</label>
+        <input type="text" id="editName" name="name" required style="width: 100%; padding: 8px; box-sizing: border-box;">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="editLatitude">Широта:</label>
+        <input type="number" id="editLatitude" name="latitude" step="0.000001" required style="width: 100%; padding: 8px; box-sizing: border-box;">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="editLongitude">Долгота:</label>
+        <input type="number" id="editLongitude" name="longitude" step="0.000001" required style="width: 100%; padding: 8px; box-sizing: border-box;">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="editRadius">Радиус (метры):</label>
+        <input type="number" id="editRadius" name="radius" min="1" max="10000" value="100" required style="width: 100%; padding: 8px; box-sizing: border-box;">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="editDescription">Описание:</label>
+        <textarea id="editDescription" name="description" style="width: 100%; padding: 8px; box-sizing: border-box; height: 60px;"></textarea>
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label>
+          <input type="checkbox" id="editActive" name="active" checked> Активна
+        </label>
+      </div>
+      <button type="submit" style="width: 100%; padding: 10px; background: #007bff; color: white; border: none; border-radius: 4px;">Сохранить</button>
+    </form>
+  </div>
+</div>
+
+<!-- Zones Management Section -->
+<div style="padding: 20px; background: rgba(255,255,255,0.1); border-radius: 8px;">
+  <h2>Гео-зоны</h2>
+  <button id="createZoneBtn" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; margin-bottom: 15px;">Создать зону</button>
+
+  <div id="loading" style="text-align: center; margin: 20px;">Загрузка зон...</div>
+  <table id="zones-table" style="display: none; width: 100%; border-collapse: collapse; margin-top: 10px;">
+    <thead>
+      <tr>
+        <th style="border: 1px solid #ccc; padding: 10px;">Имя</th>
+        <th style="border: 1px solid #ccc; padding: 10px;">Координаты</th>
+        <th style="border: 1px solid #ccc; padding: 10px;">Радиус</th>
+        <th style="border: 1px solid #ccc; padding: 10px;">Описание</th>
+        <th style="border: 1px solid #ccc; padding: 10px;">Активна</th>
+        <th style="border: 1px solid #ccc; padding: 10px;">Создана</th>
+        <th style="border: 1px solid #ccc; padding: 10px;">Действия</th>
+      </tr>
+    </thead>
+    <tbody id="zones-body">
+    </tbody>
+  </table>
+  <div id="no-zones" style="display: none; text-align: center; margin: 20px;">Зоны недоступны</div>
+  <div id="error" style="display: none; color: red; margin-top: 10px;">Ошибка загрузки зон</div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  // Modal elements
+  const editModal = document.getElementById('editModal');
+  const closeEditModal = document.getElementById('closeEditModal');
+  const editForm = document.getElementById('editForm');
+
+  // Modal event listeners
+  closeEditModal.onclick = () => editModal.style.display = 'none';
+  window.onclick = function(event) {
+    if (event.target == editModal) editModal.style.display = 'none';
+  }
+
+  // Form submission
+  editForm.onsubmit = function(e) {
+    e.preventDefault();
+    const zoneId = document.getElementById('editZoneId').value;
+    const formData = new FormData(editForm);
+    const data = {
+      name: formData.get('name'),
+      latitude: parseFloat(formData.get('latitude')),
+      longitude: parseFloat(formData.get('longitude')),
+      radius: parseInt(formData.get('radius')),
+      description: formData.get('description') || '',
+      active: document.getElementById('editActive').checked
+    };
+
+    const method = zoneId ? 'PUT' : 'POST';
+    const url = zoneId ? `/api/v1/zones/${zoneId}` : '/api/v1/zones';
+
+    fetch(url, {
+      method: method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    })
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    })
+    .then(result => {
+      if (result.success || result.id) {
+        alert(zoneId ? 'Зона обновлена успешно' : 'Зона создана успешно');
+        editModal.style.display = 'none';
+        loadZones();
+      } else {
+        alert('Операция не удалась');
+      }
+    })
+    .catch(err => {
+      alert('Ошибка: ' + err.message);
+    });
+  };
+
+  // Create zone button
+  document.getElementById('createZoneBtn').onclick = () => showEditModal();
+
+  function loadZones() {
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('zones-table').style.display = 'none';
+    document.getElementById('no-zones').style.display = 'none';
+    document.getElementById('error').style.display = 'none';
+
+    fetch('/api/v1/zones')
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}: Не удалось загрузить зоны`);
+        return res.json();
+      })
+      .then(data => {
+        const tbody = document.getElementById('zones-body');
+        tbody.innerHTML = '';
+        if (data.length === 0) {
+          document.getElementById('no-zones').style.display = 'block';
+        } else {
+          data.forEach(zone => {
+            const row = tbody.insertRow();
+            row.insertCell(0).textContent = zone.name || '';
+            row.insertCell(1).textContent = `${zone.latitude?.toFixed(6)}, ${zone.longitude?.toFixed(6)}`;
+            row.insertCell(2).textContent = `${zone.radius || 0} m`;
+            row.insertCell(3).textContent = zone.description || '';
+            row.insertCell(4).textContent = zone.active ? 'Да' : 'Нет';
+            row.insertCell(5).textContent = zone.created_at || '';
+
+            const actionCell = row.insertCell(6);
+            const editBtn = document.createElement('button');
+            editBtn.textContent = 'Редактировать';
+            editBtn.style = 'padding: 5px 10px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; margin-right: 5px;';
+            editBtn.onclick = () => showEditModal(zone);
+            actionCell.appendChild(editBtn);
+
+            const toggleBtn = document.createElement('button');
+            toggleBtn.textContent = zone.active ? 'Деактивировать' : 'Активировать';
+            toggleBtn.style = `padding: 5px 10px; background: ${zone.active ? '#ffc107' : '#28a745'}; color: white; border: none; border-radius: 4px; cursor: pointer; margin-right: 5px;`;
+            toggleBtn.onclick = () => toggleZone(zone.id, !zone.active);
+            actionCell.appendChild(toggleBtn);
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.textContent = 'Удалить';
+            deleteBtn.style = 'padding: 5px 10px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;';
+            deleteBtn.onclick = () => deleteZone(zone.id);
+            actionCell.appendChild(deleteBtn);
+          });
+          document.getElementById('zones-table').style.display = 'table';
+        }
+        document.getElementById('loading').style.display = 'none';
+      })
+      .catch(err => {
+        console.error('Ошибка загрузки зон:', err);
+        document.getElementById('error').textContent = 'Ошибка загрузки зон: ' + err.message;
+        document.getElementById('error').style.display = 'block';
+        document.getElementById('loading').style.display = 'none';
+      });
+  }
+
+  function showEditModal(zone = null) {
+    document.getElementById('editZoneId').value = zone ? zone.id : '';
+    document.getElementById('editName').value = zone ? zone.name || '' : '';
+    document.getElementById('editLatitude').value = zone ? zone.latitude || '' : '';
+    document.getElementById('editLongitude').value = zone ? zone.longitude || '' : '';
+    document.getElementById('editRadius').value = zone ? zone.radius || 100 : 100;
+    document.getElementById('editDescription').value = zone ? zone.description || '' : '';
+    document.getElementById('editActive').checked = zone ? zone.active : true;
+    document.getElementById('modalTitle').textContent = zone ? 'Редактировать зону' : 'Создать зону';
+    editModal.style.display = 'block';
+  }
+
+  function toggleZone(zoneId, active) {
+    fetch(`/api/v1/zones/${zoneId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ active: active })
+    })
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    })
+    .then(result => {
+      if (result.success) {
+        alert(`Зона ${active ? 'активирована' : 'деактивирована'} успешно`);
+        loadZones();
+      } else {
+        alert('Переключение не удалось');
+      }
+    })
+    .catch(err => {
+      alert('Ошибка: ' + err.message);
+    });
+  }
+
+  function deleteZone(zoneId) {
+    if (!confirm('Вы уверены, что хотите удалить эту зону?')) return;
+    fetch(`/api/v1/zones/${zoneId}`, { method: 'DELETE' })
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then(result => {
+        if (result.success) {
+          alert('Зона удалена успешно');
+          loadZones();
+        } else {
+          alert('Удаление не удалось');
+        }
+      })
+      .catch(err => {
+        alert('Ошибка: ' + err.message);
+      });
+  }
+
+  // Initial load
+  loadZones();
+});
+</script>
+{% endblock %}

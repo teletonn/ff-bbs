@@ -1,5 +1,360 @@
 {% extends "base.html" %}
 
 {% block content %}
-<p>Здесь будут отображаться все сообщения, проходящие через сеть. Будет реализована фильтрация по каналу, отправителю, получателю, а также поиск по тексту.</p>
+<div id="loading" class="loading">Loading messages...</div>
+<div class="filter-panel">
+    <select id="filter-type" onchange="updateFilterPlaceholder()">
+        <option value="from_id">От (ID или имя)</option>
+        <option value="channel">Канал</option>
+        <option value="dm">Только ЛС</option>
+        <option value="channel_only">Только канал</option>
+    </select>
+    <input type="text" id="filter-input" placeholder="Фильтр по отправителю" oninput="debouncedFilter()">
+    <button onclick="applyFilter()">Фильтр</button>
+    <button onclick="clearFilter()">Очистить</button>
+    <button onclick="refreshMessages()">Обновить</button>
+</div>
+
+<div class="control-panel">
+   <h3>Отправить новое сообщение</h3>
+   <label for="recipient-select">Получатель:</label><br>
+   <select id="recipient-select"><option value="">Выберите получателя</option></select><br>
+   <label for="message-input">Сообщение (макс 500 символов):</label><br>
+   <textarea id="message-input" placeholder="Введите ваше сообщение" maxlength="500" required></textarea><br>
+   <button onclick="sendMessage()">Отправить сообщение</button>
+</div>
+<div id="messages-container" style="display: none;">
+    <!-- Message cards will be inserted here -->
+</div>
+<div id="no-messages" class="loading" style="display: none;">Сообщения недоступны</div>
+<div id="pagination" class="pagination">
+  <button id="prev-btn" onclick="changePage(-1)" disabled>Предыдущая</button>
+  <span id="page-info" class="page-info">Страница 1</span>
+  <button id="next-btn" onclick="changePage(1)" disabled>Следующая</button>
+</div>
+<div id="error" class="error" style="display: none;">Ошибка загрузки сообщений</div>
+
+<!-- Success Modal -->
+<div id="success-modal" class="modal">
+  <div class="modal-content">
+    <span class="close" onclick="closeModal()">&times;</span>
+    <h3>Сообщение отправлено успешно!</h3>
+    <p id="success-message"></p>
+  </div>
+</div>
+
+<script>
+let currentPage = 1;
+let currentFilter = '';
+let currentFilterType = 'from_id';
+let totalPages = 1;
+let channels = [];
+let users = [];
+let nodes = [];
+let filterTimeout = null;
+
+// Debounced filter function
+function debouncedFilter() {
+    clearTimeout(filterTimeout);
+    filterTimeout = setTimeout(() => {
+        applyFilter();
+    }, 300); // 300ms delay
+}
+
+function loadDropdowns() {
+   Promise.all([
+     fetch('/api/v1/channels').then(res => res.json()),
+     fetch('/api/v1/users').then(res => res.json()),
+     fetch('/api/v1/nodes').then(res => res.json())
+   ])
+   .then(([chData, userData, nodeData]) => {
+     channels = chData;
+     users = userData;
+     nodes = nodeData;
+     updateRecipients();
+   })
+   .catch(err => console.error('Error loading data:', err));
+}
+
+function updateRecipients() {
+    const recipientSelect = document.getElementById('recipient-select');
+    recipientSelect.innerHTML = '<option value="">Выберите получателя</option>';
+
+   // Add users
+   users.forEach(user => {
+     if (user.node_id) {
+       const option = document.createElement('option');
+       option.value = user.node_id;
+       option.textContent = `${user.username} (Пользователь)`;
+       recipientSelect.appendChild(option);
+     }
+   });
+
+   // Add nodes
+   nodes.forEach(node => {
+     const option = document.createElement('option');
+     option.value = node.id;
+     option.textContent = `${node.name || node.id} (Узел)`;
+     recipientSelect.appendChild(option);
+   });
+
+   // Add channels
+   channels.forEach(ch => {
+     const option = document.createElement('option');
+     option.value = ch;
+     option.textContent = `${ch} (Канал)`;
+     recipientSelect.appendChild(option);
+   });
+}
+
+
+function updateFilterPlaceholder() {
+    const filterType = document.getElementById('filter-type').value;
+    const filterInput = document.getElementById('filter-input');
+    currentFilterType = filterType;
+    if (filterType === 'dm') {
+      filterInput.style.display = 'none';
+      filterInput.value = '';
+    } else if (filterType === 'channel_only') {
+      filterInput.style.display = 'none';
+      filterInput.value = '';
+    } else {
+      filterInput.style.display = 'inline-block';
+      const placeholders = {
+        'from_id': 'Фильтр по отправителю (ID или имя)',
+        'channel': 'Фильтр по каналу'
+      };
+      filterInput.placeholder = placeholders[filterType] || `Фильтр по ${filterType}`;
+    }
+}
+
+function createMessageCard(msg) {
+    const card = document.createElement('div');
+    card.className = 'message-card';
+
+    // Determine status
+    let statusText = 'Неизвестно';
+    let statusClass = 'status-unknown';
+    if (msg.delivered === true) {
+        statusText = 'Доставлено';
+        statusClass = 'status-delivered';
+    } else if (msg.delivered === false) {
+        if (msg.retry_count > 0) {
+            statusText = `Повтор (${msg.retry_count})`;
+            statusClass = 'status-retrying';
+        } else {
+            statusText = 'Ожидает';
+            statusClass = 'status-pending';
+        }
+    }
+
+    // Format display names
+    const fromDisplay = msg.from_name || msg.from_id || 'Неизвестно';
+    const toDisplay = msg.to_name || msg.to_id || 'Неизвестно';
+
+    card.innerHTML = `
+        <div class="message-header" onclick="toggleMessageCard(this)">
+            <div class="message-info">
+                <span class="message-type">${msg.is_dm ? 'ЛС' : 'Канал'}</span>
+                <span class="from-to">От: ${fromDisplay} → Кому: ${toDisplay}</span>
+                <span class="channel">${msg.channel || ''}</span>
+            </div>
+            <div class="message-meta">
+                <span class="timestamp">${msg.timestamp || ''}</span>
+                <span class="status ${statusClass}">${statusText}</span>
+                <span class="expand-icon">▼</span>
+            </div>
+        </div>
+        <div class="message-content">
+            <div class="message-text">${msg.text || ''}</div>
+        </div>
+        <div class="message-details" style="display: none;">
+            <div class="detail-row">
+                <strong>От ID:</strong> ${msg.from_id || 'N/A'}
+            </div>
+            <div class="detail-row">
+                <strong>Кому ID:</strong> ${msg.to_id || 'N/A'}
+            </div>
+            <div class="detail-row">
+                <strong>Канал:</strong> ${msg.channel || 'N/A'}
+            </div>
+            <div class="detail-row">
+                <strong>Время:</strong> ${msg.timestamp || 'N/A'}
+            </div>
+            <div class="detail-row">
+                <strong>Статус доставки:</strong> ${statusText}
+            </div>
+            <div class="detail-row">
+                <strong>Попыток доставки:</strong> ${msg.delivery_attempts || 0}
+            </div>
+            <div class="detail-row">
+                <strong>Количество повторов:</strong> ${msg.retry_count || 0}
+            </div>
+        </div>
+    `;
+
+    return card;
+}
+
+function toggleMessageCard(header) {
+    const card = header.parentElement;
+    const details = card.querySelector('.message-details');
+    const icon = header.querySelector('.expand-icon');
+
+    if (details.style.display === 'none') {
+        details.style.display = 'block';
+        icon.textContent = '▲';
+    } else {
+        details.style.display = 'none';
+        icon.textContent = '▼';
+    }
+}
+
+function loadMessages(page = 1, filter = '', filterType = 'from_id') {
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('messages-container').style.display = 'none';
+    document.getElementById('no-messages').style.display = 'none';
+    document.getElementById('error').style.display = 'none';
+
+    // Save current scroll position
+    const container = document.getElementById('messages-container');
+    const scrollTop = container.scrollTop;
+
+    let url = `/api/v1/messages?page=${page}&limit=20`;
+    if (filter && filterType !== 'dm' && filterType !== 'channel_only') {
+      if (filterType === 'from_id') url += `&source=${encodeURIComponent(filter)}`;
+      else if (filterType === 'channel') url += `&type=${encodeURIComponent(filter)}`;
+    } else if (filterType === 'dm') {
+      url += `&dm_only=true`;
+    } else if (filterType === 'channel_only') {
+      url += `&channel_only=true`;
+    }
+
+    fetch(url)
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}: Не удалось загрузить сообщения`);
+        return res.json();
+      })
+      .then(data => {
+        container.innerHTML = '';
+        if (data.length === 0) {
+          document.getElementById('no-messages').style.display = 'block';
+        } else {
+          data.forEach(msg => {
+            const card = createMessageCard(msg);
+            container.appendChild(card);
+          });
+          document.getElementById('messages-container').style.display = 'block';
+          // Restore scroll position
+          container.scrollTop = scrollTop;
+        }
+        document.getElementById('next-btn').disabled = data.length < 20;
+        document.getElementById('prev-btn').disabled = page === 1;
+        document.getElementById('page-info').textContent = `Page ${page}`;
+        currentPage = page;
+        currentFilter = filter;
+        currentFilterType = filterType;
+        document.getElementById('loading').style.display = 'none';
+      })
+      .catch(err => {
+        console.error('Ошибка загрузки сообщений:', err);
+        document.getElementById('error').textContent = 'Ошибка загрузки сообщений: ' + err.message;
+        document.getElementById('error').style.display = 'block';
+        document.getElementById('loading').style.display = 'none';
+      });
+}
+
+function changePage(delta) {
+   const newPage = currentPage + delta;
+   if (newPage >= 1) {
+     loadMessages(newPage, currentFilter, currentFilterType);
+   }
+}
+
+function applyFilter() {
+   const filterType = document.getElementById('filter-type').value;
+   const filter = document.getElementById('filter-input').value;
+   loadMessages(1, filter, filterType);
+}
+
+function clearFilter() {
+     document.getElementById('filter-input').value = '';
+     document.getElementById('filter-type').value = 'from_id';
+     currentFilter = '';
+     currentFilterType = 'from_id';
+     updateFilterPlaceholder();
+     loadMessages(1);
+ }
+
+function refreshMessages() {
+    loadMessages(currentPage, currentFilter, currentFilterType);
+}
+
+function showSuccessModal(message) {
+    document.getElementById('success-message').textContent = message;
+    document.getElementById('success-modal').style.display = 'block';
+}
+
+function closeModal() {
+    document.getElementById('success-modal').style.display = 'none';
+}
+
+// Close modal when clicking outside of it
+window.onclick = function(event) {
+    const modal = document.getElementById('success-modal');
+    if (event.target == modal) {
+        modal.style.display = 'none';
+    }
+}
+
+function sendMessage() {
+   const recipient = document.getElementById('recipient-select').value;
+   const message = document.getElementById('message-input').value.trim();
+
+   if (!recipient || !message) {
+     alert('Пожалуйста, заполните все поля.');
+     return;
+   }
+
+   if (message.length > 500) {
+     alert('Сообщение должно быть не более 500 символов.');
+     return;
+   }
+
+   const isChannel = channels.includes(recipient);
+   const mode = isChannel ? 'channel' : 'dm';
+
+   fetch('/api/v1/messages/send', {
+     method: 'POST',
+     headers: {
+       'Content-Type': 'application/json',
+     },
+     body: JSON.stringify({ mode: mode, recipient: recipient, message: message }),
+     credentials: 'same-origin'
+   })
+   .then(response => {
+     if (!response.ok) {
+       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+     }
+     return response.json();
+   })
+   .then(data => {
+     if (data.success) {
+       showSuccessModal(`ID команды: ${data.command_id}`);
+       document.getElementById('message-input').value = '';
+       loadMessages(currentPage, currentFilter, currentFilterType);
+     } else {
+       alert(`Ошибка: ${data.error || 'Неизвестная ошибка'}`);
+     }
+   })
+   .catch(error => {
+     console.error('Ошибка отправки сообщения:', error);
+     alert(`Ошибка отправки сообщения: ${error.message}`);
+   });
+}
+
+loadDropdowns();
+loadMessages();
+setInterval(() => loadMessages(currentPage, currentFilter, currentFilterType), 10000);
+</script>
 {% endblock %}

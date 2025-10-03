@@ -9,6 +9,11 @@ import asyncio
 import random
 import contextlib # for suppressing output on watchdog
 import io # for suppressing output on watchdog
+import uuid
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+from webui.db_handler import save_message, update_message_delivery_status, get_undelivered_messages, update_node_telemetry, get_node_by_id
 from modules.log import *
 
 # Global Variables
@@ -590,73 +595,152 @@ def messageChunker(message):
 
     return message
         
-def send_message(message, ch, nodeid=0, nodeInt=1, bypassChuncking=False):
-    # Send a message to a channel or DM
+def send_message(message, ch, nodeid=0, nodeInt=1, bypassChuncking=False, resend_existing=False, existing_message_id=None):
+    # Send a message to a channel or DM with retry logic and offline saving
     interface = globals()[f'interface{nodeInt}']
     # Check if the message is empty
     if message == "" or message == None or len(message) == 0:
         return False
 
-    if not bypassChuncking:
-        # Split the message into chunks if it exceeds the MESSAGE_CHUNK_SIZE
-        message_list = messageChunker(message)
+    # Prevent sending to own node
+    if nodeid != 0 and nodeid in [globals().get(f'myNodeNum{i}') for i in range(1, 10) if globals().get(f'myNodeNum{i}')]:
+        logger.warning(f"System: Attempted to send message to own node {nodeid}")
+        return False
+
+    # Generate unique message ID if not resending
+    if resend_existing and existing_message_id:
+        message_id = existing_message_id
     else:
-        message_list = [message]
+        message_id = str(uuid.uuid4())
 
-    if isinstance(message_list, list):
-        # Send the message to the channel or DM
-        total_length = sum(len(chunk) for chunk in message_list)
-        num_chunks = len(message_list)
-        for m in message_list:
-            chunkOf = f"{message_list.index(m)+1}/{num_chunks}"
-            if nodeid == 0:
-                # Send to channel
-                if wantAck:
-                    logger.info(f"Device:{nodeInt} Channel:{ch} " + CustomFormatter.red + f"req.ACK " + f"Chunker{chunkOf} SendingChannel: " + CustomFormatter.white + m.replace('\n', ' '))
-                    interface.sendText(text=m, channelIndex=ch, wantAck=True)
+        # Save message to database first
+        from_node_id = str(globals().get(f'myNodeNum{nodeInt}', 777))
+        to_node_id = str(nodeid) if nodeid != 0 else None
+        is_dm = nodeid != 0
+        timestamp = time.time()
+
+        try:
+            save_message(from_node_id, to_node_id, str(ch), message, timestamp, is_dm, message_id=message_id)
+        except Exception as e:
+            logger.error(f"System: Failed to save message to database: {e}")
+            return False
+
+    # Check if recipient node is online and recently active before attempting DM delivery
+    if nodeid != 0:
+        node_info = get_node_by_id(str(nodeid))
+        if not node_info or not node_info.get('is_online', False) or (time.time() - node_info.get('last_seen', 0)) > 60:
+            logger.warning(f"System: Recipient node {nodeid} is offline or not recently active, message saved as undelivered")
+            return False
+
+    # Attempt delivery with retries
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        try:
+            # Update delivery attempts
+            update_message_delivery_status(message_id, delivery_attempts=attempt + 1)
+
+            if not bypassChuncking:
+                # Split the message into chunks if it exceeds the MESSAGE_CHUNK_SIZE
+                message_list = messageChunker(message)
+            else:
+                message_list = [message]
+
+            if isinstance(message_list, list):
+                # Send the message to the channel or DM
+                total_length = sum(len(chunk) for chunk in message_list)
+                num_chunks = len(message_list)
+                for m in message_list:
+                    chunkOf = f"{message_list.index(m)+1}/{num_chunks}"
+                    if nodeid == 0:
+                        # Send to channel
+                        if wantAck:
+                            logger.info(f"Device:{nodeInt} Channel:{ch} Attempt:{attempt+1} " + CustomFormatter.red + f"req.ACK " + f"Chunker{chunkOf} SendingChannel: " + CustomFormatter.white + m.replace('\n', ' '))
+                            interface.sendText(text=m, channelIndex=ch, wantAck=True)
+                        else:
+                            logger.info(f"Device:{nodeInt} Channel:{ch} Attempt:{attempt+1} " + CustomFormatter.red + f"Chunker{chunkOf} SendingChannel: " + CustomFormatter.white + m.replace('\n', ' '))
+                            interface.sendText(text=m, channelIndex=ch)
+                    else:
+                        # Send to DM - always use ACK for delivery confirmation
+                        logger.info(f"Device:{nodeInt} Attempt:{attempt+1} " + CustomFormatter.red + f"req.ACK " + f"Chunker{chunkOf} Sending DM: " + CustomFormatter.white + m.replace('\n', ' ') + CustomFormatter.purple +\
+                                  " To: " + CustomFormatter.white + f"{get_name_from_number(nodeid, 'long', nodeInt)}")
+                        interface.sendText(text=m, channelIndex=ch, destinationId=nodeid, wantAck=True)
+
+                    # Throttle the message sending to prevent spamming the device
+                    if (message_list.index(m)+1) % 4 == 0:
+                        time.sleep(responseDelay + 1)
+                        if (message_list.index(m)+1) % 5 == 0:
+                            logger.warning(f"System: throttling rate Interface{nodeInt} on {chunkOf}")
+
+                    # wait an amount of time between sending each split message
+                    time.sleep(splitDelay)
+            else: # message is less than MESSAGE_CHUNK_SIZE characters
+                if nodeid == 0:
+                    # Send to channel
+                    if wantAck:
+                        logger.info(f"Device:{nodeInt} Channel:{ch} Attempt:{attempt+1} " + CustomFormatter.red + "req.ACK " + "SendingChannel: " + CustomFormatter.white + message.replace('\n', ' '))
+                        interface.sendText(text=message, channelIndex=ch, wantAck=True)
+                    else:
+                        logger.info(f"Device:{nodeInt} Channel:{ch} Attempt:{attempt+1} " + CustomFormatter.red + "SendingChannel: " + CustomFormatter.white + message.replace('\n', ' '))
+                        interface.sendText(text=message, channelIndex=ch)
                 else:
-                    logger.info(f"Device:{nodeInt} Channel:{ch} " + CustomFormatter.red + f"Chunker{chunkOf} SendingChannel: " + CustomFormatter.white + m.replace('\n', ' '))
-                    interface.sendText(text=m, channelIndex=ch)
-            else:
-                # Send to DM
-                if wantAck:
-                    logger.info(f"Device:{nodeInt} " + CustomFormatter.red + f"req.ACK " + f"Chunker{chunkOf} Sending DM: " + CustomFormatter.white + m.replace('\n', ' ') + CustomFormatter.purple +\
-                             " To: " + CustomFormatter.white + f"{get_name_from_number(nodeid, 'long', nodeInt)}")
-                    interface.sendText(text=m, channelIndex=ch, destinationId=nodeid, wantAck=True)
+                    # Send to DM - always use ACK for delivery confirmation
+                    logger.info(f"Device:{nodeInt} Attempt:{attempt+1} " + CustomFormatter.red + "req.ACK " + "Sending DM: " + CustomFormatter.white + message.replace('\n', ' ') + CustomFormatter.purple +\
+                                  " To: " + CustomFormatter.white + f"{get_name_from_number(nodeid, 'long', nodeInt)}")
+                    interface.sendText(text=message, channelIndex=ch, destinationId=nodeid, wantAck=True)
+
+            # If we reach here without exception, assume success
+            update_message_delivery_status(message_id, delivered=True)
+            logger.info(f"System: Message {message_id} delivered successfully on attempt {attempt+1}")
+            return True
+
+        except Exception as e:
+            logger.warning(f"System: Delivery attempt {attempt+1} failed for message {message_id}: {e}")
+            # Exponential backoff: 1s, 2s, 4s
+            if attempt < max_attempts - 1:
+                backoff_time = 2 ** attempt
+                logger.info(f"System: Retrying message {message_id} in {backoff_time} seconds")
+                time.sleep(backoff_time)
+
+    # All attempts failed
+    logger.error(f"System: Message {message_id} failed delivery after {max_attempts} attempts")
+    return False
+
+def resend_undelivered_messages(node_id, nodeInt=1):
+    """Resend undelivered messages to a specific node."""
+    try:
+        # Check if recipient node is online and recently active before attempting resend
+        node_info = get_node_by_id(str(node_id))
+        if not node_info or not node_info.get('is_online', False) or (time.time() - node_info.get('last_seen', 0)) > 60:
+            logger.debug(f"System: Node {node_id} is offline or not recently active, skipping resend")
+            return
+
+        undelivered = get_undelivered_messages(to_node_id=str(node_id))
+        if not undelivered:
+            logger.debug(f"System: No undelivered messages for node {node_id}")
+            return
+
+        logger.info(f"System: Resending {len(undelivered)} undelivered messages to node {node_id}")
+
+        for msg in undelivered:
+            # Check if message is not already delivered and attempts < 3
+            if not msg['delivered'] and msg['delivery_attempts'] < 3:
+                # Log message details for debugging
+                truncated_text = msg['text'][:50] + "..." if len(msg['text']) > 50 else msg['text']
+                logger.debug(f"System: Attempting to resend message {msg['message_id']} (attempt {msg['delivery_attempts'] + 1}/3) to node {node_id}: channel={msg['channel']}, text='{truncated_text}'")
+
+                # Try to resend
+                ch = int(msg['channel']) if msg['channel'].isdigit() else 0
+                success = send_message(msg['text'], ch, int(msg['to_node_id']), nodeInt, bypassChuncking=True, resend_existing=True, existing_message_id=msg['message_id'])
+                if success:
+                    logger.info(f"System: Successfully resent message {msg['message_id']} to node {node_id} on attempt {msg['delivery_attempts'] + 1}")
                 else:
-                    logger.info(f"Device:{nodeInt} " + CustomFormatter.red + f"Chunker{chunkOf} Sending DM: " + CustomFormatter.white + m.replace('\n', ' ') + CustomFormatter.purple +\
-                                " To: " + CustomFormatter.white + f"{get_name_from_number(nodeid, 'long', nodeInt)}")
-                    interface.sendText(text=m, channelIndex=ch, destinationId=nodeid)
-
-            # Throttle the message sending to prevent spamming the device
-            if (message_list.index(m)+1) % 4 == 0:
-                time.sleep(responseDelay + 1)
-                if (message_list.index(m)+1) % 5 == 0:
-                    logger.warning(f"System: throttling rate Interface{nodeInt} on {chunkOf}")
-                
-
-            # wait an amout of time between sending each split message
-            time.sleep(splitDelay)
-    else: # message is less than MESSAGE_CHUNK_SIZE characters
-        if nodeid == 0:
-            # Send to channel
-            if wantAck:
-                logger.info(f"Device:{nodeInt} Channel:{ch} " + CustomFormatter.red + "req.ACK " + "SendingChannel: " + CustomFormatter.white + message.replace('\n', ' '))
-                interface.sendText(text=message, channelIndex=ch, wantAck=True)
+                    logger.warning(f"System: Failed to resend message {msg['message_id']} to node {node_id} on attempt {msg['delivery_attempts'] + 1}")
+                    # Increment retry count
+                    update_message_delivery_status(msg['message_id'], retry_count=msg['retry_count'] + 1)
             else:
-                logger.info(f"Device:{nodeInt} Channel:{ch} " + CustomFormatter.red + "SendingChannel: " + CustomFormatter.white + message.replace('\n', ' '))
-                interface.sendText(text=message, channelIndex=ch)
-        else:
-            # Send to DM
-            if wantAck:
-                logger.info(f"Device:{nodeInt} " + CustomFormatter.red + "req.ACK " + "Sending DM: " + CustomFormatter.white + message.replace('\n', ' ') + CustomFormatter.purple +\
-                             " To: " + CustomFormatter.white + f"{get_name_from_number(nodeid, 'long', nodeInt)}")
-                interface.sendText(text=message, channelIndex=ch, destinationId=nodeid, wantAck=True)
-            else:
-                logger.info(f"Device:{nodeInt} " + CustomFormatter.red + "Sending DM: " + CustomFormatter.white + message.replace('\n', ' ') + CustomFormatter.purple +\
-                            " To: " + CustomFormatter.white + f"{get_name_from_number(nodeid, 'long', nodeInt)}")
-                interface.sendText(text=message, channelIndex=ch, destinationId=nodeid)
-    return True
+                logger.debug(f"System: Skipping message {msg['message_id']} - delivered={msg['delivered']}, attempts={msg['delivery_attempts']}")
+    except Exception as e:
+        logger.error(f"System: Error resending undelivered messages to node {node_id}: {e}")
 
 def get_wikipedia_summary(search_term):
     wikipedia_search = wikipedia.search(search_term, results=3)
@@ -977,7 +1061,7 @@ def displayNodeTelemetry(nodeID=0, rxNode=0, userRequested=False):
 
     if batteryLevel < 25:
         logger.warning(f"System: Low Battery Level: {batteryLevel}{emji} on Device: {rxNode}")
-        send_message(f"Low Battery Level: {batteryLevel}{emji} on Device: {rxNode}", {secure_channel}, 0, {secure_interface})
+        send_message(f"Low Battery Level: {batteryLevel}{emji} on Device: {rxNode}", secure_channel, 0, secure_interface)
     elif batteryLevel < 10:
         logger.critical(f"System: Critical Battery Level: {batteryLevel}{emji} on Device: {rxNode}")
     return dataResponse
@@ -986,6 +1070,7 @@ positionMetadata = {}
 def consumeMetadata(packet, rxNode=0):
     try:
         # keep records of recent telemetry data
+        hop_count = 0
         packet_type = ''
         if packet.get('decoded'):
             packet_type = packet['decoded']['portnum']
@@ -996,6 +1081,7 @@ def consumeMetadata(packet, rxNode=0):
             if debugMetadata: print(f"DEBUG TELEMETRY_APP: {packet}\n\n")
             # get the telemetry data
             telemetry_packet = packet['decoded']['telemetry']
+            hop_count = 0
             if telemetry_packet.get('deviceMetrics'):
                 deviceMetrics = telemetry_packet['deviceMetrics']
             if telemetry_packet.get('localStats'):
@@ -1004,12 +1090,22 @@ def consumeMetadata(packet, rxNode=0):
                 if localStats.get('numPacketsTx') is not None and localStats.get('numPacketsRx') is not None and localStats['numPacketsTx'] != 0:
                     # Assign the values to the telemetry dictionary
                     keys = [
-                        'numPacketsTx', 'numPacketsRx', 'numOnlineNodes', 
+                        'numPacketsTx', 'numPacketsRx', 'numOnlineNodes',
                         'numOfflineNodes', 'numPacketsTxErr', 'numPacketsRxErr', 'numTotalNodes']
-                    
+
                     for key in keys:
                         if localStats.get(key) is not None:
                             telemetryData[rxNode][key] = localStats.get(key)
+
+                    # Update database with telemetry timestamp and online status
+                    try:
+                        update_node_telemetry(nodeID, {'last_telemetry': time.time()})
+                        logger.debug(f"System: Updated telemetry timestamp for node {nodeID}")
+                    except Exception as e:
+                        logger.error(f"System: Failed to update telemetry timestamp for node {nodeID}: {e}")
+
+                    # Node is online, try to resend undelivered messages
+                    resend_undelivered_messages(nodeID, rxNode)
         
         # POSITION_APP packets
         if packet_type == 'POSITION_APP':
@@ -1020,9 +1116,16 @@ def consumeMetadata(packet, rxNode=0):
             try:
                 if nodeID not in positionMetadata:
                     positionMetadata[nodeID] = {}
-        
+
                 for key in keys:
                     positionMetadata[nodeID][key] = position_data.get(key, 0)
+
+                # Update database with telemetry timestamp for position packets
+                try:
+                    update_node_telemetry(nodeID, {'last_telemetry': time.time()})
+                    logger.debug(f"System: Updated telemetry timestamp for position packet from node {nodeID}")
+                except Exception as e:
+                    logger.error(f"System: Failed to update telemetry timestamp for position packet from node {nodeID}: {e}")
 
                 # if altitude is over highfly_altitude send a log and message for high-flying nodes and not in highfly_ignoreList
                 if position_data.get('altitude', 0) > highfly_altitude and highfly_enabled and str(nodeID) not in highfly_ignoreList:
@@ -1031,21 +1134,21 @@ def consumeMetadata(packet, rxNode=0):
                     msg = f"🚀 High Altitude Detected! NodeID:{nodeID} Alt:{altFeet:,.0f}ft/{position_data['altitude']:,.0f}m"
 
                     if highfly_check_openskynetwork:
-                         # check get_openskynetwork to see if the node is an aircraft
-                         if 'latitude' in position_data and 'longitude' in position_data:
+                          # check get_openskynetwork to see if the node is an aircraft
+                          if 'latitude' in position_data and 'longitude' in position_data:
                             flight_info = get_openskynetwork(position_data.get('latitude', 0), position_data.get('longitude', 0))
                             if flight_info and NO_ALERTS not in flight_info and ERROR_FETCHING_DATA not in flight_info:
                                 msg += f"\n✈️Detected near:\n{flight_info}"
 
                     send_message(msg, highfly_channel, 0, highfly_interface)
                     time.sleep(responseDelay)
-        
+
                 # Keep the positionMetadata dictionary at a maximum size of 20
                 if len(positionMetadata) > 20:
                     # Remove the oldest entry
                     oldest_nodeID = next(iter(positionMetadata))
                     del positionMetadata[oldest_nodeID]
-                
+
                 # add a packet count to the positionMetadata for the node
                 if 'packetCount' in positionMetadata[nodeID]:
                     positionMetadata[nodeID]['packetCount'] += 1
@@ -1091,10 +1194,15 @@ def consumeMetadata(packet, rxNode=0):
             paxcounter_data = packet['decoded']
 
         # REMOTE_HARDWARE_APP
-        if packet_type ==  'REMOTE_HARDWARE_APP':
+        if packet_type == 'REMOTE_HARDWARE_APP':
             if debugMetadata: print(f"DEBUG REMOTE_HARDWARE_APP: {packet}\n\n")
             # get the remote hardware data
             remote_hardware_data = packet['decoded']
+
+        # TEXT_MESSAGE_APP
+        if packet_type == 'TEXT_MESSAGE_APP':
+            hop_count = 0
+
     except KeyError as e:
         logger.critical(f"System: Error consuming metadata: {e} Device:{rxNode}")
         logger.debug(f"System: Error Packet = {packet}")

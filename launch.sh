@@ -70,9 +70,9 @@ fi
 
 # Start web UI if requested
 if [ "$start_webui" = true ]; then
-    echo "Starting Web UI on port 80 in the background..."
-    echo "Note: Running on port 80 may require superuser privileges (e.g., 'sudo ./launch.sh webui')."
-    uvicorn webui.main:app --host 0.0.0.0 --port 80 &
+    echo "Starting Web UI on port 8000 in the background..."
+    echo "Note: Running on port 8000, no superuser privileges required."
+    uvicorn webui.main:app --host 0.0.0.0 --port 8000 &
     PIDS+=($!)
 fi
 
@@ -80,7 +80,7 @@ fi
 if [ ${#PIDS[@]} -gt 0 ]; then
     echo "Services are running. Press Ctrl+C to stop all services."
     # Trap Ctrl+C to kill all child processes of this script
-    trap "echo -e '\nStopping all services...'; kill 0; exit" SIGINT SIGTERM
+    trap "trap - SIGINT SIGTERM; echo -e '\nStopping all services...'; kill 0; exit" SIGINT SIGTERM
     wait
 else
     # If no valid arguments were provided and no legacy command was run
