@@ -528,6 +528,23 @@ button:disabled, .btn:disabled {
   color: var(--text-color) !important;
 }
 
+/* Enhanced Filters */
+.enhanced-filters {
+  background: var(--glass-bg) !important;
+  backdrop-filter: blur(var(--blur-intensity)) !important;
+  -webkit-backdrop-filter: blur(var(--blur-intensity)) !important;
+  border: 1px solid var(--glass-border) !important;
+  border-radius: var(--border-radius) !important;
+  padding: 10px !important;
+  margin-bottom: 10px !important;
+  box-shadow: 0 8px 32px var(--shadow-color) !important;
+  color: var(--text-color) !important;
+}
+
+.enhanced-filters label {
+  color: var(--text-color) !important;
+}
+
 /* Node Actions Buttons */
 .node-actions button {
   background: var(--glass-bg) !important;

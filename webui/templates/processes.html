@@ -2,8 +2,8 @@
 
 {% block content %}
 <!-- Modal for creating/editing process -->
-<div id="editModal" style="display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5);">
-  <div style="background-color: white; margin: 15% auto; padding: 20px; border: 1px solid #888; width: 80%; max-width: 500px; border-radius: 8px;">
+<div id="editModal" class="modal">
+  <div class="modal-content">
     <span id="closeEditModal" style="color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer;">&times;</span>
     <h2 id="modalTitle">Создать автоматизированный процесс</h2>
     <form id="editForm">
@@ -32,21 +32,21 @@
 </div>
 
 <!-- Processes Management Section -->
-<div style="padding: 20px; background: rgba(255,255,255,0.1); border-radius: 8px;">
+<div class="content-block">
   <h2>Автоматизированные процессы</h2>
-  <button id="createProcessBtn" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; margin-bottom: 15px;">Создать процесс</button>
+  <button id="createProcessBtn" class="btn" style="margin-bottom: 15px;">Создать процесс</button>
 
   <div id="loading" style="text-align: center; margin: 20px;">Загрузка процессов...</div>
-  <table id="processes-table" style="display: none; width: 100%; border-collapse: collapse; margin-top: 10px;">
+  <table id="processes-table" style="display: none;">
     <thead>
       <tr>
-        <th style="border: 1px solid #ccc; padding: 10px;">Имя</th>
-        <th style="border: 1px solid #ccc; padding: 10px;">Команда</th>
-        <th style="border: 1px solid #ccc; padding: 10px;">Расписание</th>
-        <th style="border: 1px solid #ccc; padding: 10px;">Включено</th>
-        <th style="border: 1px solid #ccc; padding: 10px;">Количество запусков</th>
-        <th style="border: 1px solid #ccc; padding: 10px;">Последний запуск</th>
-        <th style="border: 1px solid #ccc; padding: 10px;">Действия</th>
+        <th>Имя</th>
+        <th>Команда</th>
+        <th>Расписание</th>
+        <th>Включено</th>
+        <th>Количество запусков</th>
+        <th>Последний запуск</th>
+        <th>Действия</th>
       </tr>
     </thead>
     <tbody id="processes-body">
@@ -139,25 +139,28 @@ document.addEventListener('DOMContentLoaded', function() {
             const actionCell = row.insertCell(6);
             const editBtn = document.createElement('button');
             editBtn.textContent = 'Редактировать';
-            editBtn.style = 'padding: 5px 10px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; margin-right: 5px;';
+            editBtn.className = 'btn';
+            editBtn.style.marginRight = '5px';
             editBtn.onclick = () => showEditModal(process);
             actionCell.appendChild(editBtn);
 
             const toggleBtn = document.createElement('button');
             toggleBtn.textContent = process.enabled ? 'Отключить' : 'Включить';
-            toggleBtn.style = `padding: 5px 10px; background: ${process.enabled ? '#ffc107' : '#28a745'}; color: white; border: none; border-radius: 4px; cursor: pointer; margin-right: 5px;`;
+            toggleBtn.className = 'btn';
+            toggleBtn.style.marginRight = '5px';
             toggleBtn.onclick = () => toggleProcess(process.id, !process.enabled);
             actionCell.appendChild(toggleBtn);
 
             const runBtn = document.createElement('button');
             runBtn.textContent = 'Запустить сейчас';
-            runBtn.style = 'padding: 5px 10px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; margin-right: 5px;';
+            runBtn.className = 'btn';
+            runBtn.style.marginRight = '5px';
             runBtn.onclick = () => runProcess(process.id);
             actionCell.appendChild(runBtn);
 
             const deleteBtn = document.createElement('button');
             deleteBtn.textContent = 'Удалить';
-            deleteBtn.style = 'padding: 5px 10px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;';
+            deleteBtn.className = 'btn';
             deleteBtn.onclick = () => deleteProcess(process.id);
             actionCell.appendChild(deleteBtn);
           });

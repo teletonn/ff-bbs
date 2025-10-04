@@ -1,6 +1,6 @@
 import uvicorn
-from fastapi import FastAPI, Request, Query, Path, HTTPException, Depends, Form
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import FastAPI, Request, Query, Path, HTTPException, Depends, Form, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,6 +35,30 @@ import configparser
 import logging
 import os
 import asyncio
+from typing import List
+import json
+
+# WebSocket connection manager
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: str):
+        for connection in self.active_connections:
+            try:
+                await connection.send_text(message)
+            except Exception as e:
+                # Remove broken connections
+                self.active_connections.remove(connection)
+
+manager = ConnectionManager()
 
 # Инициализация базы данных при старте
 try:
@@ -228,6 +252,32 @@ async def get_processes_page(request: Request, current_user: dict = Depends(logi
 async def get_zones_page(request: Request, current_user: dict = Depends(login_required)):
     """Отображает страницу гео-зон."""
     return render_template("zones.html", request, page_title="Гео-зоны")
+
+# WebSocket endpoint for real-time updates
+@app.websocket("/ws/map")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            # Keep connection alive, data is pushed from mesh_bot
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
+# Route to serve service-worker.js
+@app.get("/service-worker.js")
+async def get_service_worker():
+    return FileResponse("webui/static/service-worker.js", media_type="application/javascript")
+
+# Function to broadcast map updates
+async def broadcast_map_update(update_type: str, data: dict):
+    """Broadcast map data updates to all connected WebSocket clients."""
+    message = {
+        "type": update_type,
+        "data": data,
+        "timestamp": datetime.now().isoformat()
+    }
+    await manager.broadcast(json.dumps(message))
 
 # Auth routes
 @app.get("/login", response_class=HTMLResponse)
@@ -671,26 +721,38 @@ async def api_create_trigger(request: Request):
     """POST: Create a new trigger."""
     try:
         body = await request.json()
-        geofence_id = body.get('geofence_id')
-        condition = body.get('condition')
-        action = body.get('action')
-        parameters = json.dumps(body.get('parameters', {}))
-        active = body.get('active', 1)
+        logging.info(f"POST /api/v1/triggers payload: {body}")
+        zone_id = body.get('zone_id')
+        event_type = body.get('event_type')
+        action_type = body.get('action_type')
+        action_payload = json.dumps(body.get('action_payload', {}))
+        name = body.get('name', '')
+        description = body.get('description', '')
 
-        if not geofence_id or condition not in ['enter', 'exit'] or not action:
-            raise HTTPException(status_code=400, detail="Required: geofence_id (int), condition ('enter' or 'exit'), action (str)")
+        logging.info(f"Extracted zone_id: {zone_id} (type: {type(zone_id)})")
+        logging.info(f"event_type: {event_type}, action_type: {action_type}")
 
-        # Validate geofence exists
-        if not get_geofence(geofence_id):
-            raise HTTPException(status_code=400, detail="Invalid geofence_id")
+        if not zone_id or event_type not in ['enter', 'exit'] or not action_type:
+            raise HTTPException(status_code=400, detail="Required: zone_id (int), event_type ('enter' or 'exit'), action_type (str)")
 
-        # Basic validation for parameters JSON
+        # Validate zone exists
+        zone_exists = get_zone(zone_id)
+        logging.info(f"Zone exists check for zone_id {zone_id}: {zone_exists is not None}")
+        if zone_exists:
+            logging.info(f"Zone data: {zone_exists}")
+        if not zone_exists:
+            logging.error(f"Zone {zone_id} does not exist in database")
+            raise HTTPException(status_code=400, detail="Invalid zone_id")
+
+        # Basic validation for action_payload JSON
         try:
-            json.loads(parameters)
+            json.loads(action_payload)
         except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="parameters must be valid JSON")
+            raise HTTPException(status_code=400, detail="action_payload must be valid JSON")
 
-        trigger_id = create_trigger(geofence_id, condition, action, parameters, active)
+        logging.info(f"About to create trigger with zone_id={zone_id}, event_type={event_type}, action_type={action_type}")
+        trigger_id = create_trigger(zone_id, event_type, action_type, action_payload, name, description)
+        logging.info(f"create_trigger returned: {trigger_id}")
         if trigger_id:
             return {"id": trigger_id}
         else:
@@ -698,7 +760,7 @@ async def api_create_trigger(request: Request):
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON")
     except Exception as e:
-        print(f"Error creating trigger: {e}")
+        logging.error(f"Error creating trigger: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get("/api/v1/triggers/{trigger_id}", dependencies=[Depends(login_required)])
@@ -714,27 +776,28 @@ async def api_update_trigger(trigger_id: int, request: Request):
     """PUT: Update a trigger (full update)."""
     try:
         body = await request.json()
-        geofence_id = body.get('geofence_id')
-        condition = body.get('condition')
-        action = body.get('action')
-        parameters = json.dumps(body.get('parameters', {}))
-        active = body.get('active', 1)
+        zone_id = body.get('zone_id')
+        event_type = body.get('event_type')
+        action_type = body.get('action_type')
+        action_payload = json.dumps(body.get('action_payload', {}))
+        name = body.get('name', '')
+        description = body.get('description', '')
 
-        if geofence_id is None or condition is None or action is None:
-            raise HTTPException(status_code=400, detail="Required: geofence_id, condition, action")
+        if zone_id is None or event_type is None or action_type is None:
+            raise HTTPException(status_code=400, detail="Required: zone_id, event_type, action_type")
 
-        if condition not in ['enter', 'exit']:
-            raise HTTPException(status_code=400, detail="condition must be 'enter' or 'exit'")
+        if event_type not in ['enter', 'exit']:
+            raise HTTPException(status_code=400, detail="event_type must be 'enter' or 'exit'")
 
-        if not get_geofence(geofence_id):
-            raise HTTPException(status_code=400, detail="Invalid geofence_id")
+        if not get_zone(zone_id):
+            raise HTTPException(status_code=400, detail="Invalid zone_id")
 
         try:
-            json.loads(parameters)
+            json.loads(action_payload)
         except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="parameters must be valid JSON")
+            raise HTTPException(status_code=400, detail="action_payload must be valid JSON")
 
-        updated = update_trigger(trigger_id, geofence_id, condition, action, parameters, active)
+        updated = update_trigger(trigger_id, zone_id, event_type, action_type, action_payload, name, description)
         if not updated:
             raise HTTPException(status_code=404, detail="Trigger not found")
         return {"success": True}
@@ -1199,7 +1262,9 @@ async def api_delete_process(process_id: int, current_user: dict = Depends(get_c
 @app.get("/api/v1/zones", dependencies=[Depends(login_required)])
 async def api_get_zones():
     """GET: Retrieve all zones."""
-    return get_zones()
+    zones = get_zones()
+    logging.info(f"GET /api/v1/zones returned {len(zones)} zones: {[z['id'] for z in zones]}")
+    return zones
 
 @app.get("/api/v1/zones/{zone_id}", dependencies=[Depends(login_required)])
 async def api_get_zone(zone_id: int):
@@ -1410,8 +1475,6 @@ async def api_post_command(request: Request, current_user: dict = Depends(get_cu
 async def api_send_message(request: Request, current_user: dict = Depends(get_current_user)):
     """Endpoint to send a message via the command queue."""
     sender_user_id = current_user['id']
-    if current_user['role'] != 'admin':
-        raise HTTPException(403, "Admin role required")
 
     try:
         body = await request.json()
@@ -1456,6 +1519,94 @@ async def api_send_message(request: Request, current_user: dict = Depends(get_cu
     except Exception as e:
         logging.error(f"Error sending message: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.post("/api/v1/traceroute")
+async def api_initiate_traceroute(request: Request):
+    """Endpoint to initiate a traceroute to a destination node."""
+    try:
+        body = await request.json()
+        dest_node_id = body.get('dest_node_id', '').strip()
+
+        if not dest_node_id:
+            raise HTTPException(status_code=400, detail="dest_node_id is required")
+
+        # Validate that destination node exists
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT node_id FROM nodes WHERE node_id = ?", (dest_node_id,))
+        if not cursor.fetchone():
+            raise HTTPException(status_code=404, detail="Destination node not found")
+
+        # Insert new route trace record
+        cursor.execute("""
+            INSERT INTO route_traces (source_node_id, dest_node_id, status)
+            VALUES (?, ?, 'pending')
+        """, ('1127918448', dest_node_id))
+
+        trace_id = cursor.lastrowid
+
+        conn.commit()
+
+        # Queue traceroute command
+        parameters = {'dest_node_id': dest_node_id, 'trace_id': trace_id}
+        cmd_id = insert_command('traceroute', parameters, 1)
+
+        logging.info(f"Traceroute initiated: trace_id={trace_id}, dest_node_id={dest_node_id}")
+
+        return {"success": True, "trace_id": trace_id, "command_id": cmd_id}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error initiating traceroute: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+    finally:
+        conn.close()
+
+@app.get("/api/v1/traceroute/{trace_id}")
+async def api_get_traceroute_status(trace_id: int):
+    """Endpoint to get traceroute status and results."""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT id, source_node_id, dest_node_id, timestamp, hops, status, response_time, error_message
+            FROM route_traces
+            WHERE id = ?
+        """, (trace_id,))
+
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Traceroute not found")
+
+        trace_data = {
+            'id': row[0],
+            'source_node_id': row[1],
+            'dest_node_id': row[2],
+            'timestamp': row[3],
+            'hops': row[4],
+            'status': row[5],
+            'response_time': row[6],
+            'error_message': row[7]
+        }
+
+        # Parse hops if it's a JSON string
+        if trace_data['hops'] and isinstance(trace_data['hops'], str):
+            try:
+                trace_data['hops'] = json.loads(trace_data['hops'])
+            except json.JSONDecodeError:
+                trace_data['hops'] = []
+
+        return trace_data
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error getting traceroute status: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":

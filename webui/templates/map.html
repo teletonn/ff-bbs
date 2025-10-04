@@ -2,7 +2,10 @@
 
 {% block content %}
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.css" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.Default.css" />
 <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.4.1/dist/leaflet.markercluster.js"></script>
 <style>
 .marker-label {
   background: rgba(255, 255, 255, 0.9);
@@ -43,9 +46,151 @@
   background: #f8f9fa;
   cursor: pointer;
   font-size: 12px;
+  transition: all 0.2s ease;
 }
 .node-actions button:hover {
   background: #e9ecef;
+  transform: translateY(-1px);
+}
+.node-actions button:focus {
+  outline: 2px solid #007bff;
+  outline-offset: 2px;
+}
+
+/* Loading indicators */
+.loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+  backdrop-filter: blur(2px);
+}
+
+.loading-content {
+  background: white;
+  padding: 30px;
+  border-radius: 10px;
+  text-align: center;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+  max-width: 400px;
+  width: 90%;
+}
+
+.spinner {
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid #007bff;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 15px;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.progress-bar {
+  width: 100%;
+  height: 8px;
+  background: #f0f0f0;
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 10px 0;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #007bff, #28a745);
+  width: 0%;
+  transition: width 0.3s ease;
+  border-radius: 4px;
+}
+
+/* Error handling */
+.error-message {
+  background: #f8d7da;
+  border: 1px solid #f5c6cb;
+  color: #721c24;
+  padding: 15px;
+  border-radius: 5px;
+  margin: 10px 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.error-message.error {
+  background: #f8d7da;
+  border-color: #f5c6cb;
+  color: #721c24;
+}
+
+.error-message.warning {
+  background: #fff3cd;
+  border-color: #ffeaa7;
+  color: #856404;
+}
+
+.error-message.success {
+  background: #d4edda;
+  border-color: #c3e6cb;
+  color: #155724;
+}
+
+.error-text {
+  flex: 1;
+  font-weight: 500;
+}
+
+.error-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.retry-btn {
+  background: #007bff;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.2s ease;
+}
+
+.retry-btn:hover {
+  background: #0056b3;
+}
+
+.retry-btn:focus {
+  outline: 2px solid #007bff;
+  outline-offset: 2px;
+}
+
+.dismiss-btn {
+  background: #6c757d;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.2s ease;
+}
+
+.dismiss-btn:hover {
+  background: #545b62;
 }
 
 /* Modal styles */
@@ -80,13 +225,404 @@
   font-size: 28px;
   font-weight: bold;
   cursor: pointer;
+  transition: color 0.2s ease;
 }
 
 .close:hover {
   color: black;
 }
+
+.close:focus {
+  outline: 2px solid #007bff;
+  outline-offset: 2px;
+}
+
+/* Animation styles */
+@keyframes pulse {
+  0% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.2); opacity: 0.7; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.animation-marker div {
+  animation: pulse 1s infinite;
+}
+
+/* Route arrow styles */
+.route-arrow {
+  pointer-events: none;
+}
+
+/* Tooltips */
+.tooltip {
+  position: relative;
+  display: inline-block;
+}
+
+.tooltip .tooltip-text {
+  visibility: hidden;
+  width: 200px;
+  background-color: #333;
+  color: #fff;
+  text-align: center;
+  border-radius: 6px;
+  padding: 5px 10px;
+  position: absolute;
+  z-index: 1;
+  bottom: 125%;
+  left: 50%;
+  margin-left: -100px;
+  opacity: 0;
+  transition: opacity 0.3s;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.tooltip:hover .tooltip-text {
+  visibility: visible;
+  opacity: 1;
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+  .enhanced-filters {
+    padding: 8px !important;
+  }
+
+  .enhanced-filters div {
+    flex-direction: column !important;
+    gap: 10px !important;
+  }
+
+  .node-actions {
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .node-actions button {
+    padding: 6px 10px;
+    font-size: 11px;
+    min-width: 80px;
+  }
+
+  .modal-content {
+    margin: 10% auto;
+    padding: 15px;
+    width: 95%;
+  }
+
+  .map-container {
+    height: 500px !important;
+  }
+
+  .error-message {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .error-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 480px) {
+  .enhanced-filters div div {
+    flex-direction: column !important;
+  }
+
+  .node-actions button {
+    width: 100%;
+    margin-bottom: 2px;
+  }
+
+  .tooltip .tooltip-text {
+    width: 150px;
+    margin-left: -75px;
+    font-size: 11px;
+  }
+}
+
+/* Accessibility improvements */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+button:focus,
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 2px solid #007bff;
+  outline-offset: 2px;
+}
+
+/* Keyboard navigation */
+.keyboard-shortcuts {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 10px;
+  border-radius: 5px;
+  font-size: 12px;
+  display: none;
+  z-index: 1000;
+}
+
+.keyboard-shortcuts.show {
+  display: block;
+}
+
+/* Toast notifications */
+.toast-container {
+   position: fixed;
+   top: 20px;
+   left: 50%;
+   transform: translateX(-50%);
+   z-index: 1001;
+   display: flex;
+   flex-direction: column;
+   gap: 10px;
+   pointer-events: none;
+}
+
+.toast {
+    background: rgba(255, 255, 255, 0.25);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    color: #333;
+    padding: 12px 20px;
+    border-radius: 8px;
+    box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+    font-size: 14px;
+    font-weight: 500;
+    max-width: 400px;
+    min-width: 250px;
+    text-align: center;
+    transform: translateY(-100px);
+    opacity: 0;
+    transition: all 0.3s ease;
+    pointer-events: auto;
+}
+
+.toast.show {
+   transform: translateY(0);
+   opacity: 1;
+}
+
+.toast.hide {
+   transform: translateY(-20px);
+   opacity: 0;
+}
+
+.toast.success {
+   border-left: 4px solid #28a745;
+   background: rgba(40, 167, 69, 0.1);
+}
+
+.toast.error {
+   border-left: 4px solid #dc3545;
+   background: rgba(220, 53, 69, 0.1);
+}
+
+.toast.warning {
+   border-left: 4px solid #ffc107;
+   background: rgba(255, 193, 7, 0.1);
+}
+
+.toast.info {
+   border-left: 4px solid #17a2b8;
+   background: rgba(23, 162, 184, 0.1);
+}
+
+.toast .close-btn {
+   position: absolute;
+   top: 5px;
+   right: 8px;
+   background: none;
+   border: none;
+   font-size: 18px;
+   cursor: pointer;
+   color: #666;
+   padding: 0;
+   width: 20px;
+   height: 20px;
+   display: flex;
+   align-items: center;
+   justify-content: center;
+}
+
+.toast .close-btn:hover {
+   color: #333;
+}
+
+/* Custom marker cluster styles */
+.marker-cluster-small {
+   background-color: rgba(181, 226, 140, 0.6);
+   border: 2px solid rgba(110, 204, 57, 0.8);
+ }
+
+.marker-cluster-small div {
+   background-color: rgba(181, 226, 140, 0.8);
+   border-radius: 50%;
+   text-align: center;
+   line-height: 36px;
+   font-weight: bold;
+   color: #333;
+ }
+
+.marker-cluster-medium {
+   background-color: rgba(241, 211, 87, 0.6);
+   border: 2px solid rgba(240, 194, 12, 0.8);
+ }
+
+.marker-cluster-medium div {
+   background-color: rgba(241, 211, 87, 0.8);
+   border-radius: 50%;
+   text-align: center;
+   line-height: 36px;
+   font-weight: bold;
+   color: #333;
+ }
+
+.marker-cluster-large {
+   background-color: rgba(253, 156, 115, 0.6);
+   border: 2px solid rgba(241, 128, 23, 0.8);
+ }
+
+.marker-cluster-large div {
+   background-color: rgba(253, 156, 115, 0.8);
+   border-radius: 50%;
+   text-align: center;
+   line-height: 36px;
+   font-weight: bold;
+   color: #333;
+ }
+
+.marker-cluster-user {
+   background-color: rgba(155, 89, 182, 0.6);
+   border: 2px solid rgba(142, 68, 173, 0.8);
+ }
+
+.marker-cluster-user div {
+   background-color: rgba(155, 89, 182, 0.8);
+   border-radius: 50%;
+   text-align: center;
+   line-height: 36px;
+   font-weight: bold;
+   color: white;
+ }
+
+.marker-cluster-zone {
+   background-color: rgba(255, 71, 87, 0.6);
+   border: 2px solid rgba(230, 25, 25, 0.8);
+ }
+
+.marker-cluster-zone div {
+   background-color: rgba(255, 71, 87, 0.8);
+   border-radius: 50%;
+   text-align: center;
+   line-height: 36px;
+   font-weight: bold;
+   color: white;
+ }
 </style>
-<div id="loading" style="text-align: center; margin: 20px;">Загрузка данных карты...</div>
+<!-- Loading overlay -->
+<div id="loading-overlay" class="loading-overlay" style="display: none;">
+  <div class="loading-content">
+    <div class="spinner"></div>
+    <div id="loading-text">Загрузка данных карты...</div>
+    <div class="progress-bar">
+      <div id="loading-progress" class="progress-fill"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast notifications -->
+<div id="toast-container" class="toast-container" aria-live="polite" aria-atomic="true"></div>
+
+<!-- Keyboard shortcuts help -->
+<div id="keyboard-shortcuts" class="keyboard-shortcuts">
+  <strong>Горячие клавиши:</strong><br>
+  F - Поиск | L - Узлы | U - Пользователи | Z - Зоны | R - Маршруты<br>
+  ? - Показать/скрыть эту справку
+</div>
+
+<!-- Enhanced Filter Controls -->
+<div id="enhanced-filters" class="enhanced-filters" style="padding: 10px; margin-bottom: 10px;">
+  <div style="display: flex; flex-wrap: wrap; gap: 15px; align-items: center; margin-bottom: 10px;">
+    <div style="display: flex; gap: 5px; align-items: center;">
+      <label for="searchFilter">Поиск:</label>
+      <input type="text" id="searchFilter" placeholder="Имя или ID..." style="padding: 2px 5px; border: 1px solid #ccc; border-radius: 3px;">
+    </div>
+
+    <div style="display: flex; gap: 10px; align-items: center;">
+      <span>Статусы узлов:</span>
+      <label style="display: flex; align-items: center; gap: 3px;">
+        <input type="checkbox" id="statusOnline" checked style="margin: 0;">
+        <span>Онлайн</span>
+      </label>
+      <label style="display: flex; align-items: center; gap: 3px;">
+        <input type="checkbox" id="statusMoving" checked style="margin: 0;">
+        <span>Движется</span>
+      </label>
+      <label style="display: flex; align-items: center; gap: 3px;">
+        <input type="checkbox" id="statusOffline" checked style="margin: 0;">
+        <span>Офлайн</span>
+      </label>
+      <label style="display: flex; align-items: center; gap: 3px;">
+        <input type="checkbox" id="statusUnknown" checked style="margin: 0;">
+        <span>Неизвестно</span>
+      </label>
+    </div>
+
+    <div style="display: flex; gap: 10px; align-items: center;">
+      <span>Слои:</span>
+      <div class="tooltip">
+        <button id="toggleNodes" style="padding: 4px 8px; border: 1px solid #ccc; border-radius: 3px; background: #28a745; color: white; cursor: pointer;" aria-label="Переключить отображение узлов" title="Переключить отображение узлов (L)">Узлы ✓</button>
+        <span class="tooltip-text">Переключить отображение узлов</span>
+      </div>
+      <div class="tooltip">
+        <button id="toggleUsers" style="padding: 4px 8px; border: 1px solid #ccc; border-radius: 3px; background: #28a745; color: white; cursor: pointer;" aria-label="Переключить отображение пользователей" title="Переключить отображение пользователей (U)">Пользователи ✓</button>
+        <span class="tooltip-text">Переключить отображение пользователей</span>
+      </div>
+      <div class="tooltip">
+        <button id="toggleZones" style="padding: 4px 8px; border: 1px solid #ccc; border-radius: 3px; background: #28a745; color: white; cursor: pointer;" aria-label="Переключить отображение зон" title="Переключить отображение зон (Z)">Зоны ✓</button>
+        <span class="tooltip-text">Переключить отображение зон</span>
+      </div>
+      <div class="tooltip">
+        <button id="toggleRoutes" style="padding: 4px 8px; border: 1px solid #ccc; border-radius: 3px; background: #dc3545; color: white; cursor: pointer;" aria-label="Переключить отображение маршрутов" title="Переключить отображение маршрутов (R)">Маршруты ✗</button>
+        <span class="tooltip-text">Переключить отображение маршрутов</span>
+      </div>
+    </div>
+
+    <div style="display: flex; gap: 10px; align-items: center;">
+      <span>Экспорт:</span>
+      <div class="tooltip">
+        <button id="exportGPX" style="padding: 4px 8px; border: 1px solid #ccc; border-radius: 3px; background: #28a745; color: white; cursor: pointer;" aria-label="Экспорт в формате GPX">GPX</button>
+        <span class="tooltip-text">Экспорт данных в формате GPX</span>
+      </div>
+      <div class="tooltip">
+        <button id="exportCSV" style="padding: 4px 8px; border: 1px solid #ccc; border-radius: 3px; background: #007bff; color: white; cursor: pointer;" aria-label="Экспорт в формате CSV">CSV</button>
+        <span class="tooltip-text">Экспорт данных в формате CSV</span>
+      </div>
+      <div class="tooltip">
+        <button id="exportJSON" style="padding: 4px 8px; border: 1px solid #ccc; border-radius: 3px; background: #6c757d; color: white; cursor: pointer;" aria-label="Экспорт в формате JSON">JSON</button>
+        <span class="tooltip-text">Экспорт данных в формате JSON</span>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- Route Filter Controls -->
 <div id="route-filters" style="background: #f8f9fa; padding: 10px; margin-bottom: 10px; border-radius: 5px; border: 1px solid #dee2e6;">
@@ -128,14 +664,16 @@
   </div>
 </div>
 
-<div id="map-container" style="position: relative;">
-  <div id="map" style="width: 100%; height: 600px;"></div>
-  <div id="no-coords-msg" style="display: none; position: absolute; z-index: 1; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(255,255,255,0.9); padding: 20px; text-align: center; border-radius: 5px;">Узлы с координатами недоступны</div>
-  <ul id="map-list" style="list-style: none; padding: 0; margin-top: 10px;">
-  </ul>
+<div id="map-container" style="position: relative;" role="main" aria-label="Интерактивная карта сети">
+   <div id="map" style="width: 100%; height: 600px;" role="img" aria-label="Карта с узлами, пользователями и зонами" tabindex="0"></div>
+   <div id="no-coords-msg" style="display: none; position: absolute; z-index: 1; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(255,255,255,0.9); padding: 20px; text-align: center; border-radius: 5px;" role="status" aria-live="polite">Узлы с координатами недоступны</div>
+   <ul id="map-list" style="list-style: none; padding: 0; margin-top: 10px;" role="list" aria-label="Список элементов карты">
+   </ul>
 </div>
 <div id="no-map-data" style="display: none; text-align: center; margin: 20px;">Узлы недоступны</div>
-<div id="error" style="display: none; color: red; margin-top: 10px;">Ошибка загрузки данных карты</div>
+
+<!-- Error messages container -->
+<div id="error-container" aria-live="polite" aria-atomic="true"></div>
 
 <script>
 function formatTimestamp(timestamp) {
@@ -166,8 +704,234 @@ let currentFilters = {
   showRoutes: false,
   nodeFilter: 'all',
   timeFilter: 24,
-  selectedNode: null
+  selectedNode: null,
+  searchTerm: '',
+  statusFilters: {
+    online: true,
+    moving: true,
+    offline: true,
+    unknown: true
+  },
+  layerVisibility: {
+    nodes: true,
+    users: true,
+    zones: true,
+    routes: false
+  }
 };
+let websocket = null;
+let websocketReconnectAttempts = 0;
+let websocketReconnectTimeout = null;
+let maxWebSocketReconnectAttempts = 10;
+let visibleNodes = [];
+let visibleUsers = [];
+let visibleZones = [];
+let visibleRoutes = [];
+let allNodes = [];
+let allUsers = [];
+let allZones = [];
+let loadTimeout = null;
+let currentLoadingOperation = null;
+let keyboardShortcutsVisible = false;
+
+// Enhanced UI utility functions
+function showLoading(message = 'Загрузка...', showProgress = false) {
+  const overlay = document.getElementById('loading-overlay');
+  const text = document.getElementById('loading-text');
+  const progress = document.getElementById('loading-progress');
+
+  text.textContent = message;
+  overlay.style.display = 'flex';
+
+  if (showProgress) {
+    progress.style.width = '0%';
+    progress.style.display = 'block';
+  } else {
+    progress.style.display = 'none';
+  }
+
+  // Announce to screen readers
+  overlay.setAttribute('aria-live', 'assertive');
+  overlay.setAttribute('aria-label', message);
+}
+
+function hideLoading() {
+  const overlay = document.getElementById('loading-overlay');
+  overlay.style.display = 'none';
+  overlay.removeAttribute('aria-live');
+  overlay.removeAttribute('aria-label');
+}
+
+function updateLoadingProgress(percent) {
+  const progress = document.getElementById('loading-progress');
+  progress.style.width = Math.min(100, Math.max(0, percent)) + '%';
+}
+
+function showError(message, type = 'error', retryCallback = null) {
+   showToast(message, type === 'error' ? 'error' : type);
+ }
+
+function showToast(message, type = 'info', duration = 2000) {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.innerHTML = `
+    <span>${message}</span>
+    <button class="close-btn" onclick="this.parentElement.remove()" aria-label="Закрыть уведомление">&times;</button>
+  `;
+
+  container.appendChild(toast);
+
+  // Trigger animation
+  setTimeout(() => toast.classList.add('show'), 10);
+
+  // Auto-hide
+  const hideTimeout = setTimeout(() => {
+    toast.classList.add('hide');
+    setTimeout(() => {
+      if (toast.parentNode) {
+        toast.remove();
+      }
+    }, 300);
+  }, duration);
+
+  // Clear timeout if manually closed
+  toast.querySelector('.close-btn').addEventListener('click', () => {
+    clearTimeout(hideTimeout);
+  });
+}
+
+function showSuccess(message) {
+  showToast(message, 'success');
+}
+
+function toggleKeyboardShortcuts() {
+  const shortcuts = document.getElementById('keyboard-shortcuts');
+  keyboardShortcutsVisible = !keyboardShortcutsVisible;
+  if (keyboardShortcutsVisible) {
+    shortcuts.classList.add('show');
+  } else {
+    shortcuts.classList.remove('show');
+  }
+}
+
+// Keyboard navigation handler
+function handleKeyboardShortcuts(event) {
+  // Ignore if user is typing in an input
+  if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA' || event.target.tagName === 'SELECT') {
+    return;
+  }
+
+  switch (event.key.toLowerCase()) {
+    case 'f':
+      event.preventDefault();
+      document.getElementById('searchFilter').focus();
+      showSuccess('Фокус на поле поиска');
+      break;
+    case 'l':
+      event.preventDefault();
+      toggleLayer('nodes');
+      break;
+    case 'u':
+      event.preventDefault();
+      toggleLayer('users');
+      break;
+    case 'z':
+      event.preventDefault();
+      toggleLayer('zones');
+      break;
+    case 'r':
+      event.preventDefault();
+      toggleLayer('routes');
+      break;
+    case '?':
+      event.preventDefault();
+      toggleKeyboardShortcuts();
+      break;
+    case 'escape':
+      if (keyboardShortcutsVisible) {
+        toggleKeyboardShortcuts();
+      }
+      break;
+  }
+}
+
+// Function to determine node status
+function getNodeStatus(node) {
+  if (node.is_online) {
+    if (node.ground_speed && node.ground_speed > 0) {
+      return 'moving';
+    } else {
+      return 'online';
+    }
+  } else if (node.last_seen) {
+    const lastSeen = new Date(node.last_seen);
+    const now = new Date();
+    const hoursSinceLastSeen = (now - lastSeen) / (1000 * 60 * 60);
+    if (hoursSinceLastSeen < 24) {
+      return 'offline';
+    } else {
+      return 'unknown';
+    }
+  } else {
+    return 'unknown';
+  }
+}
+
+// Debounce function for performance
+function debounce(func, wait) {
+  let timeout;
+  return function executedFunction(...args) {
+    const later = () => {
+      clearTimeout(timeout);
+      func(...args);
+    };
+    clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
+  };
+}
+
+// Function to filter items by search term
+function matchesSearch(item, searchTerm) {
+  if (!searchTerm) return true;
+  const term = searchTerm.toLowerCase();
+  const name = (item.name || '').toLowerCase();
+  const id = (item.id || '').toLowerCase();
+  return name.includes(term) || id.includes(term);
+}
+
+// Function to filter nodes by status
+function matchesStatus(node, statusFilters) {
+  const status = getNodeStatus(node);
+  return statusFilters[status];
+}
+
+// Function to update layer visibility
+function updateLayerVisibility() {
+  if (currentFilters.layerVisibility.nodes) {
+    map.addLayer(nodeLayer);
+  } else {
+    map.removeLayer(nodeLayer);
+  }
+
+  if (currentFilters.layerVisibility.users) {
+    map.addLayer(userLayer);
+  } else {
+    map.removeLayer(userLayer);
+  }
+
+  if (currentFilters.layerVisibility.zones) {
+    map.addLayer(zoneLayer);
+  } else {
+    map.removeLayer(zoneLayer);
+  }
+
+  if (currentFilters.layerVisibility.routes) {
+    map.addLayer(routeLayer);
+  } else {
+    map.removeLayer(routeLayer);
+  }
+}
 
 function initMap() {
   map = L.map('map').setView([45.0355, 38.9753], 12);
@@ -176,223 +940,756 @@ function initMap() {
     attribution: '© OpenStreetMap contributors'
   }).addTo(map);
 
-  // Create layer groups for markers
-  nodeLayer = L.layerGroup().addTo(map);
-  userLayer = L.layerGroup().addTo(map);
-  zoneLayer = L.layerGroup().addTo(map);
+  // Create marker cluster groups for markers with performance limits
+  nodeLayer = L.markerClusterGroup({
+    chunkedLoading: true,
+    maxClusterRadius: 50,
+    spiderfyOnMaxZoom: true,
+    showCoverageOnHover: false,
+    zoomToBoundsOnClick: true,
+    disableClusteringAtZoom: 16, // Disable clustering at high zoom levels
+    maxZoom: 18,
+    iconCreateFunction: function(cluster) {
+      const childCount = cluster.getChildCount();
+      let className = 'marker-cluster-';
+      if (childCount < 10) {
+        className += 'small';
+      } else if (childCount < 100) {
+        className += 'medium';
+      } else {
+        className += 'large';
+      }
+      return new L.DivIcon({
+        html: '<div><span>' + childCount + '</span></div>',
+        className: 'marker-cluster ' + className,
+        iconSize: new L.Point(40, 40)
+      });
+    }
+  }).addTo(map);
+
+  userLayer = L.markerClusterGroup({
+    chunkedLoading: true,
+    maxClusterRadius: 50,
+    spiderfyOnMaxZoom: true,
+    showCoverageOnHover: false,
+    zoomToBoundsOnClick: true,
+    disableClusteringAtZoom: 16,
+    maxZoom: 18,
+    iconCreateFunction: function(cluster) {
+      const childCount = cluster.getChildCount();
+      return new L.DivIcon({
+        html: '<div><span>' + childCount + '</span></div>',
+        className: 'marker-cluster marker-cluster-user',
+        iconSize: new L.Point(40, 40)
+      });
+    }
+  }).addTo(map);
+
+  zoneLayer = L.markerClusterGroup({
+    chunkedLoading: true,
+    maxClusterRadius: 50,
+    spiderfyOnMaxZoom: true,
+    showCoverageOnHover: false,
+    zoomToBoundsOnClick: true,
+    disableClusteringAtZoom: 14, // Zones cluster at lower zoom
+    maxZoom: 18,
+    iconCreateFunction: function(cluster) {
+      const childCount = cluster.getChildCount();
+      return new L.DivIcon({
+        html: '<div><span>' + childCount + '</span></div>',
+        className: 'marker-cluster marker-cluster-zone',
+        iconSize: new L.Point(40, 40)
+      });
+    }
+  }).addTo(map);
   routeLayer = L.layerGroup().addTo(map);
 
   console.log('Map initialized');
+
+  // Add lazy loading event listeners
+  const debouncedUpdateVisibleData = debounce(updateVisibleData, 300);
+  map.on('moveend', debouncedUpdateVisibleData);
+  map.on('zoomend', debouncedUpdateVisibleData);
 }
 
-async function loadMapData() {
-  document.getElementById('loading').style.display = 'none';
-  document.getElementById('no-map-data').style.display = 'none';
-  document.getElementById('error').style.display = 'none';
-  document.getElementById('no-coords-msg').style.display = 'none';
+function connectWebSocket() {
+   // Clear any existing reconnection timeout
+   if (websocketReconnectTimeout) {
+     clearTimeout(websocketReconnectTimeout);
+     websocketReconnectTimeout = null;
+   }
 
-  const list = document.getElementById('map-list');
-  list.innerHTML = '';
+   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+   const wsUrl = `${protocol}//${window.location.host}/ws/map`;
 
-  try {
-    // Load nodes
-    const nodesRes = await fetch('/api/v1/nodes');
-    if (!nodesRes.ok) {
-      throw new Error(`HTTP ${nodesRes.status}: ${nodesRes.statusText}`);
+   websocket = new WebSocket(wsUrl);
+
+   websocket.onopen = function(event) {
+     console.log('WebSocket connected for map updates');
+     websocketReconnectAttempts = 0; // Reset reconnection attempts on successful connection
+     showSuccess('Соединение с сервером установлено');
+   };
+
+   websocket.onmessage = function(event) {
+     try {
+       const data = JSON.parse(event.data);
+       handleMapUpdate(data);
+     } catch (error) {
+       console.error('Error parsing WebSocket message:', error);
+       showError('Ошибка обработки данных от сервера', 'warning');
+     }
+   };
+
+   websocket.onclose = function(event) {
+     console.log('WebSocket disconnected, code:', event.code, 'reason:', event.reason);
+
+     // Don't reconnect if it was a clean close (code 1000) or if max attempts reached
+     if (event.code === 1000 || websocketReconnectAttempts >= maxWebSocketReconnectAttempts) {
+       console.log('WebSocket connection permanently closed or max reconnection attempts reached');
+       showError('Соединение с сервером потеряно', 'warning');
+       return;
+     }
+
+     websocketReconnectAttempts++;
+
+     // Exponential backoff: base delay of 1 second, doubling each attempt, max 60 seconds
+     const delay = Math.min(1000 * Math.pow(2, websocketReconnectAttempts - 1), 60000);
+
+     console.log(`Attempting to reconnect WebSocket in ${delay}ms (attempt ${websocketReconnectAttempts}/${maxWebSocketReconnectAttempts})`);
+
+     if (websocketReconnectAttempts === 1) {
+       showError(`Соединение потеряно. Попытка переподключения...`, 'warning');
+     }
+
+     websocketReconnectTimeout = setTimeout(() => {
+       connectWebSocket();
+     }, delay);
+   };
+
+   websocket.onerror = function(error) {
+     console.error('WebSocket error:', error);
+     // Don't show error here as onclose will handle reconnection
+   };
+ }
+
+function disconnectWebSocket() {
+   if (websocket) {
+     websocket.close(1000, 'Client disconnecting');
+     websocket = null;
+   }
+   if (websocketReconnectTimeout) {
+     clearTimeout(websocketReconnectTimeout);
+     websocketReconnectTimeout = null;
+   }
+   websocketReconnectAttempts = 0;
+ }
+
+function handleMapUpdate(update) {
+  console.log('Received map update:', update);
+
+  if (update.type === 'node_position') {
+    // Update node position in real-time
+    updateNodePosition(update.data);
+  } else if (update.type === 'node_activity') {
+    // Update node last seen time
+    updateNodeActivity(update.data);
+  } else if (update.type === 'node_status') {
+    // Update node status (online/offline)
+    updateNodeStatus(update.data);
+  } else if (update.type === 'zone_update') {
+    // Update zone information
+    updateZone(update.data);
+  }
+}
+
+function updateNodePosition(data) {
+  // Find existing marker and update its position
+  nodeLayer.eachLayer(function(layer) {
+    if (layer.options.nodeId === data.node_id) {
+      const newLatLng = [parseFloat(data.lat), parseFloat(data.lng)];
+      layer.setLatLng(newLatLng);
+
+      // Update tooltip with new timestamp
+      const labelText = layer.getTooltip().getContent().split('<br>')[0] + '<br>' + formatTimestamp(data.last_seen);
+      layer.setTooltipContent(labelText);
+
+      // Update popup with new data
+      layer.setPopupContent(
+        layer.getPopup().getContent().replace(/Последний раз: .*/, `Последний раз: ${formatTimestamp(data.last_seen)}`)
+      );
+
+      console.log(`Updated position for node ${data.node_id}: ${data.lat}, ${data.lng}`);
+      return false;
     }
-    const nodes = await nodesRes.json();
+  });
+}
 
-    // Load users
-    const usersRes = await fetch('/api/v1/users');
-    const users = usersRes.ok ? await usersRes.json() : [];
+function updateNodeActivity(data) {
+  // Update node last seen time in tooltip and popup
+  nodeLayer.eachLayer(function(layer) {
+    if (layer.options.nodeId === data.node_id) {
+      // Update tooltip with new timestamp
+      const labelText = layer.getTooltip().getContent().split('<br>')[0] + '<br>' + formatTimestamp(data.last_seen);
+      layer.setTooltipContent(labelText);
 
-    // Load zones
-    const zonesRes = await fetch('/api/v1/zones');
-    const zones = zonesRes.ok ? await zonesRes.json() : [];
+      // Update popup with new data
+      layer.setPopupContent(
+        layer.getPopup().getContent().replace(/Последний раз: .*/, `Последний раз: ${formatTimestamp(data.last_seen)}`)
+      );
 
-    // Update list
-    nodes.forEach(function(node) {
-      const li = document.createElement('li');
-      li.className = 'map-node-card';
+      console.log(`Updated activity for node ${data.node_id}: last seen ${formatTimestamp(data.last_seen)}`);
+      return false;
+    }
+  });
+}
 
-      // Determine status emoji
-      let statusEmoji = '🔴'; // red for offline
-      if (node.is_online) {
-        if (node.ground_speed && node.ground_speed > 0) {
-          statusEmoji = '🔵'; // blue for moving
-        } else {
-          statusEmoji = '🟢'; // green for online stationary
-        }
-      } else if (node.last_seen) {
-        const lastSeen = new Date(node.last_seen);
-        const now = new Date();
-        const hoursSinceLastSeen = (now - lastSeen) / (1000 * 60 * 60);
-        if (hoursSinceLastSeen < 24) {
-          statusEmoji = '🟠'; // orange for recently seen
-        } else {
-          statusEmoji = '⚫'; // gray for fixed/offline
-        }
-      }
+function updateNodeStatus(data) {
+  // Reload map data to reflect status changes
+  loadAllData();
+}
 
-      li.innerHTML = `
-        <div class="node-info">
-          <strong>${statusEmoji} Узел:</strong> ${node.name || 'Неизвестный'} на широте ${node.lat || 'N/A'}, долготе ${node.lng || 'N/A'}
-        </div>
-        <div class="node-actions">
-          <button onclick="showOnMap('${node.id}')" title="Показать на карте">📍</button>
-          <button onclick="sendMessage('${node.id}')" title="Отправить сообщение">💬</button>
-          <button onclick="traceRoute('${node.id}')" title="Трассировка">🔍</button>
-          <button onclick="showRoute('${node.id}')" title="Маршрут">🛤️</button>
-        </div>
-      `;
-      list.appendChild(li);
-    });
+function updateZone(data) {
+   // Reload zones to reflect changes
+   loadAllData();
+ }
 
-    users.forEach(function(user) {
-      if (user.node_id) {
-        const li = document.createElement('li');
-        li.className = 'map-node-card';
-        li.innerHTML = `<strong>👤 Пользователь:</strong> ${user.username} (Узел: ${user.node_id})`;
-        list.appendChild(li);
-      }
-    });
+// Data validation functions
+function validateNodeData(nodes) {
+   if (!Array.isArray(nodes)) {
+     throw new Error('Данные узлов должны быть массивом');
+   }
 
-    zones.forEach(function(zone) {
-      const li = document.createElement('li');
-      li.className = 'map-node-card';
-      li.innerHTML = `<strong>🏠 Зона:</strong> ${zone.name} (${zone.active ? 'Активна' : 'Неактивна'})`;
-      list.appendChild(li);
-    });
+   return nodes.filter(node => {
+     // Required fields validation
+     if (!node.id) {
+       console.warn('Узел без ID пропущен:', node);
+       return false;
+     }
 
-    // Clear existing markers and routes
-    nodeLayer.clearLayers();
-    userLayer.clearLayers();
-    zoneLayer.clearLayers();
-    routeLayer.clearLayers();
+     // Coordinate validation
+     const lat = parseFloat(node.lat);
+     const lng = parseFloat(node.lng);
+     if (isNaN(lat) || isNaN(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+       console.warn('Узел с некорректными координатами пропущен:', node.id, node.lat, node.lng);
+       return false;
+     }
 
-    // Process nodes for map
-    const validNodes = nodes.filter(function(node) {
+     // Sanitize data
+     return {
+       ...node,
+       lat: lat,
+       lng: lng,
+       name: (node.name || '').toString().trim(),
+       id: node.id.toString().trim(),
+       is_online: Boolean(node.is_online),
+       battery_level: node.battery_level ? parseInt(node.battery_level) : null,
+       last_seen: node.last_seen ? new Date(node.last_seen).getTime() : null,
+       ground_speed: node.ground_speed ? parseFloat(node.ground_speed) : null
+     };
+   });
+ }
+
+function validateUserData(users) {
+   if (!Array.isArray(users)) {
+     console.warn('Данные пользователей не являются массивом, возвращаем пустой массив');
+     return [];
+   }
+
+   return users.filter(user => {
+     // Required fields validation
+     if (!user.username && !user.node_id) {
+       console.warn('Пользователь без имени и node_id пропущен:', user);
+       return false;
+     }
+
+     // Coordinate validation
+     const lat = parseFloat(user.lat);
+     const lng = parseFloat(user.lng);
+     if (isNaN(lat) || isNaN(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+       console.warn('Пользователь с некорректными координатами пропущен:', user.username || user.node_id, user.lat, user.lng);
+       return false;
+     }
+
+     // Sanitize data
+     return {
+       ...user,
+       lat: lat,
+       lng: lng,
+       username: (user.username || '').toString().trim(),
+       node_id: user.node_id ? user.node_id.toString().trim() : null,
+       last_seen: user.last_seen ? new Date(user.last_seen).getTime() : null
+     };
+   });
+ }
+
+function validateZoneData(zones) {
+   if (!Array.isArray(zones)) {
+     console.warn('Данные зон не являются массивом, возвращаем пустой массив');
+     return [];
+   }
+
+   return zones.filter(zone => {
+     // Required fields validation
+     if (!zone.name && !zone.latitude && !zone.longitude) {
+       console.warn('Зона без необходимых данных пропущена:', zone);
+       return false;
+     }
+
+     // Coordinate validation
+     const lat = parseFloat(zone.latitude);
+     const lng = parseFloat(zone.longitude);
+     if (isNaN(lat) || isNaN(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+       console.warn('Зона с некорректными координатами пропущена:', zone.name, zone.latitude, zone.longitude);
+       return false;
+     }
+
+     // Radius validation
+     const radius = parseFloat(zone.radius);
+     if (isNaN(radius) || radius <= 0 || radius > 100000) { // Max 100km radius
+       console.warn('Зона с некорректным радиусом пропущена:', zone.name, zone.radius);
+       return false;
+     }
+
+     // Sanitize data
+     return {
+       ...zone,
+       latitude: lat,
+       longitude: lng,
+       radius: radius,
+       name: (zone.name || '').toString().trim(),
+       description: (zone.description || '').toString().trim(),
+       active: Boolean(zone.active)
+     };
+   });
+ }
+
+async function loadAllData(retryCount = 0) {
+   const maxRetries = 3;
+   const retryDelay = Math.pow(2, retryCount) * 1000; // Exponential backoff
+
+   showLoading('Загрузка данных карты...', true);
+   document.getElementById('no-map-data').style.display = 'none';
+   document.getElementById('no-coords-msg').style.display = 'none';
+
+   // Clear any existing timeout
+   if (loadTimeout) {
+     clearTimeout(loadTimeout);
+   }
+
+   // Set a timeout for the entire operation
+   const timeoutPromise = new Promise((_, reject) => {
+     loadTimeout = setTimeout(() => reject(new Error('Таймаут загрузки данных')), 30000);
+   });
+
+   try {
+     updateLoadingProgress(10);
+
+     // Load nodes with validation
+     const nodesPromise = fetch('/api/v1/nodes')
+       .then(res => {
+         if (!res.ok) {
+           throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+         }
+         return res.json();
+       })
+       .then(data => {
+         if (!Array.isArray(data)) {
+           throw new Error('Неверный формат данных узлов');
+         }
+         return data;
+       });
+
+     // Load users with validation
+     const usersPromise = fetch('/api/v1/users')
+       .then(res => {
+         if (!res.ok) {
+           console.warn('Не удалось загрузить пользователей:', res.status, res.statusText);
+           return [];
+         }
+         return res.json();
+       })
+       .then(data => {
+         if (!Array.isArray(data)) {
+           console.warn('Неверный формат данных пользователей, используем пустой массив');
+           return [];
+         }
+         return data;
+       })
+       .catch(err => {
+         console.warn('Ошибка загрузки пользователей:', err);
+         return [];
+       });
+
+     // Load zones with validation
+     const zonesPromise = fetch('/api/v1/zones')
+       .then(res => {
+         if (!res.ok) {
+           console.warn('Не удалось загрузить зоны:', res.status, res.statusText);
+           return [];
+         }
+         return res.json();
+       })
+       .then(data => {
+         if (!Array.isArray(data)) {
+           console.warn('Неверный формат данных зон, используем пустой массив');
+           return [];
+         }
+         return data;
+       })
+       .catch(err => {
+         console.warn('Ошибка загрузки зон:', err);
+         return [];
+       });
+
+     // Race against timeout
+     const [nodes, users, zones] = await Promise.race([
+       Promise.all([nodesPromise, usersPromise, zonesPromise]),
+       timeoutPromise
+     ]);
+
+     // Validate and sanitize node data
+     allNodes = validateNodeData(nodes);
+     updateLoadingProgress(40);
+
+     // Validate and sanitize user data
+     allUsers = validateUserData(users);
+     updateLoadingProgress(70);
+
+     // Validate and sanitize zone data
+     allZones = validateZoneData(zones);
+     updateLoadingProgress(100);
+
+     clearTimeout(loadTimeout);
+     loadTimeout = null;
+
+     hideLoading();
+     updateVisibleData();
+     showSuccess('Данные карты успешно загружены');
+
+   } catch (err) {
+     clearTimeout(loadTimeout);
+     loadTimeout = null;
+
+     console.error('Ошибка загрузки данных карты:', err);
+     hideLoading();
+
+     // Check if it's a network error and we can retry
+     const isNetworkError = err.name === 'TypeError' || err.message.includes('fetch') || err.message.includes('NetworkError');
+     const isTimeout = err.message.includes('Таймаут');
+
+     if ((isNetworkError || isTimeout) && retryCount < maxRetries) {
+       console.log(`Повторная попытка загрузки через ${retryDelay}мс (попытка ${retryCount + 1}/${maxRetries})`);
+       showError(
+         `Ошибка сети. Повторная попытка ${retryCount + 1}/${maxRetries} через ${retryDelay/1000}с...`,
+         'warning'
+       );
+       setTimeout(() => loadAllData(retryCount + 1), retryDelay);
+       return;
+     }
+
+     // Final failure
+     showError(
+       `Ошибка загрузки данных карты: ${err.message}`,
+       'error',
+       retryCount < maxRetries ? 'loadAllData()' : null
+     );
+   }
+ }
+
+function updateVisibleData() {
+  requestAnimationFrame(() => {
+    const bounds = map.getBounds();
+
+    // Filter nodes by bounds and filters
+    visibleNodes = allNodes.filter(function(node) {
       const lat = parseFloat(node.lat);
       const lng = parseFloat(node.lng);
-      return !isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+      return !isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 &&
+             bounds.contains([lat, lng]) &&
+             matchesSearch(node, currentFilters.searchTerm) &&
+             matchesStatus(node, currentFilters.statusFilters);
     });
 
-    validNodes.forEach(function(node) {
-      // Determine status color based on online status, last seen time, and movement
-      let markerColor = '#ff4757'; // red for offline
-      let isMoving = false;
-
-      if (node.is_online) {
-        // Check if node is moving (ground_speed > 0 or recent location changes)
-        if (node.ground_speed && node.ground_speed > 0) {
-          markerColor = '#3742fa'; // blue for moving
-          isMoving = true;
-        } else {
-          markerColor = '#2ed573'; // green for online but stationary
-        }
-      } else if (node.last_seen) {
-        const lastSeen = new Date(node.last_seen);
-        const now = new Date();
-        const hoursSinceLastSeen = (now - lastSeen) / (1000 * 60 * 60);
-        if (hoursSinceLastSeen < 24) {
-          markerColor = '#ffa502'; // orange for recently seen but offline
-        } else {
-          markerColor = '#636e72'; // gray for fixed/offline
-        }
-      } else {
-        markerColor = '#636e72'; // gray for unknown status
-      }
-
-      // Create custom icon with color
-      const customIcon = L.divIcon({
-        className: 'custom-marker',
-        html: `<div style="background-color: ${markerColor}; border: 2px solid white; border-radius: 50%; width: 20px; height: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>`,
-        iconSize: [20, 20],
-        iconAnchor: [10, 10]
-      });
-
-      const marker = L.marker([parseFloat(node.lat), parseFloat(node.lng)], { icon: customIcon, nodeId: node.id });
-
-      // Add permanent label
-      const labelText = (node.name || 'Неизвестный') + '<br>' + formatTimestamp(node.last_seen);
-      marker.bindTooltip(labelText, {
-        permanent: true,
-        direction: 'top',
-        offset: [0, -10],
-        className: 'marker-label'
-      });
-
-      marker.bindPopup(
-        '<h3 style="color: #333; margin-bottom: 10px; font-size: 1.1em; font-weight: 600;">📡 ' + (node.name || 'Неизвестный узел') + '</h3>' +
-        '<p style="color: #333; margin: 5px 0; line-height: 1.4;"><strong>ID:</strong> ' + node.id + '</p>' +
-        '<p style="color: #333; margin: 5px 0; line-height: 1.4;"><strong>Последний раз:</strong> ' + formatTimestamp(node.last_seen) + '</p>' +
-        '<p style="color: #333; margin: 5px 0; line-height: 1.4;"><strong>Уровень батареи:</strong> ' + (node.battery_level || 'N/A') + '%</p>' +
-        '<p style="color: #333; margin: 5px 0; line-height: 1.4;"><strong>Статус:</strong> ' + (node.is_online ? 'Онлайн' : 'Офлайн') + '</p>'
-      );
-      nodeLayer.addLayer(marker);
+    // Filter users
+    visibleUsers = allUsers.filter(function(user) {
+      const lat = parseFloat(user.lat);
+      const lng = parseFloat(user.lng);
+      return !isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 &&
+             bounds.contains([lat, lng]) &&
+             matchesSearch(user, currentFilters.searchTerm);
     });
 
-    // Process users for map (assuming they have location data)
-    const validUsers = users.filter(function(user) {
-      // For now, we'll assume users don't have direct location data
-      // This could be extended to show user locations if available
-      return false;
+    // Filter zones
+    visibleZones = allZones.filter(function(zone) {
+      return zone.latitude && zone.longitude && zone.active &&
+             bounds.contains([parseFloat(zone.latitude), parseFloat(zone.longitude)]) &&
+             matchesSearch(zone, currentFilters.searchTerm);
     });
 
-    validUsers.forEach(function(user) {
-      const marker = L.marker([parseFloat(user.lat), parseFloat(user.lng)])
-        .bindPopup(
-          '<h3 style="color: #333; margin-bottom: 10px; font-size: 1.1em; font-weight: 600;">👤 ' + (user.username || 'Неизвестный пользователь') + '</h3>' +
-          '<p style="color: #333; margin: 5px 0; line-height: 1.4;"><strong>ID узла:</strong> ' + (user.node_id || 'N/A') + '</p>' +
-          '<p style="color: #333; margin: 5px 0; line-height: 1.4;"><strong>Последний раз:</strong> ' + formatTimestamp(user.last_seen) + '</p>'
-        );
-      userLayer.addLayer(marker);
-    });
+    // Update map layers
+    updateMapLayers();
 
-    // Process zones for map
-    const validZones = zones.filter(function(zone) {
-      return zone.latitude && zone.longitude && zone.active;
-    });
+    // Update node list
+    updateNodeList();
 
-    validZones.forEach(function(zone) {
-      const circle = L.circle([parseFloat(zone.latitude), parseFloat(zone.longitude)], {
-        radius: zone.radius,
-        color: '#ff4757',
-        fillColor: '#ff6b6b',
-        fillOpacity: 0.3,
-        weight: 2
-      }).bindPopup(
-        '<h3 style="color: #333; margin-bottom: 10px; font-size: 1.1em; font-weight: 600;">🏠 ' + (zone.name || 'Неизвестная зона') + '</h3>' +
-        '<p style="color: #333; margin: 5px 0; line-height: 1.4;"><strong>Радиус:</strong> ' + (zone.radius || 0) + ' метров</p>' +
-        '<p style="color: #333; margin: 5px 0; line-height: 1.4;"><strong>Описание:</strong> ' + (zone.description || 'N/A') + '</p>' +
-        '<p style="color: #333; margin: 5px 0; line-height: 1.4;"><strong>Активна:</strong> ' + (zone.active ? 'Да' : 'Нет') + '</p>'
-      );
-      zoneLayer.addLayer(circle);
-    });
-
-    const hasValidData = validNodes.length > 0 || validUsers.length > 0 || validZones.length > 0;
+    const hasValidData = visibleNodes.length > 0 || visibleUsers.length > 0 || visibleZones.length > 0;
     if (!hasValidData) {
       document.getElementById('no-coords-msg').style.display = 'block';
     }
 
-    if (nodes.length === 0 && users.length === 0 && zones.length === 0) {
+    if (allNodes.length === 0 && allUsers.length === 0 && allZones.length === 0) {
       document.getElementById('no-map-data').style.display = 'block';
     }
-  } catch (err) {
-    console.error('Ошибка загрузки данных карты:', err);
-    document.getElementById('error').style.display = 'block';
-    document.getElementById('error').textContent = 'Ошибка загрузки данных карты: ' + err.message;
-  }
+  });
 }
+
+function updateMapLayers() {
+   const MAX_MARKERS_PER_LAYER = 1000; // Performance limit
+   let totalMarkers = visibleNodes.length + visibleUsers.length + visibleZones.length;
+
+   // Warn if too many markers
+   if (totalMarkers > MAX_MARKERS_PER_LAYER * 2) {
+     showError(`Слишком много маркеров (${totalMarkers}). Рекомендуется сузить фильтры для лучшей производительности.`, 'warning');
+   }
+
+   // Clear existing markers
+   nodeLayer.clearLayers();
+   userLayer.clearLayers();
+   zoneLayer.clearLayers();
+
+   // Limit markers per layer for performance
+   const maxNodes = Math.min(visibleNodes.length, MAX_MARKERS_PER_LAYER);
+   const maxUsers = Math.min(visibleUsers.length, MAX_MARKERS_PER_LAYER);
+   const maxZones = Math.min(visibleZones.length, MAX_MARKERS_PER_LAYER);
+
+   // Process nodes for map (limited for performance)
+   visibleNodes.slice(0, maxNodes).forEach(function(node) {
+    // Determine status color based on online status, last seen time, and movement
+    let markerColor = '#ff4757'; // red for offline
+    let isMoving = false;
+
+    if (node.is_online) {
+      // Check if node is moving (ground_speed > 0 or recent location changes)
+      if (node.ground_speed && node.ground_speed > 0) {
+        markerColor = '#3742fa'; // blue for moving
+        isMoving = true;
+      } else {
+        markerColor = '#2ed573'; // green for online but stationary
+      }
+    } else if (node.last_seen) {
+      const lastSeen = new Date(node.last_seen);
+      const now = new Date();
+      const hoursSinceLastSeen = (now - lastSeen) / (1000 * 60 * 60);
+      if (hoursSinceLastSeen < 24) {
+        markerColor = '#ffa502'; // orange for recently seen but offline
+      } else {
+        markerColor = '#636e72'; // gray for fixed/offline
+      }
+    } else {
+      markerColor = '#636e72'; // gray for unknown status
+    }
+
+    // Create custom icon with color
+    const customIcon = L.divIcon({
+      className: 'custom-marker',
+      html: `<div style="background-color: ${markerColor}; border: 2px solid white; border-radius: 50%; width: 20px; height: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>`,
+      iconSize: [20, 20],
+      iconAnchor: [10, 10]
+    });
+
+    const marker = L.marker([parseFloat(node.lat), parseFloat(node.lng)], { icon: customIcon, nodeId: node.id });
+
+    // Add permanent label
+    const labelText = (node.name || 'Неизвестный') + '<br>' + formatTimestamp(node.last_seen);
+    marker.bindTooltip(labelText, {
+      permanent: true,
+      direction: 'top',
+      offset: [0, -10],
+      className: 'marker-label'
+    });
+
+    marker.bindPopup(
+      '<h3 style="color: #333; margin-bottom: 10px; font-size: 1.1em; font-weight: 600;">📡 ' + (node.name || 'Неизвестный узел') + '</h3>' +
+      '<p style="color: #333; margin: 5px 0; line-height: 1.4;"><strong>ID:</strong> ' + node.id + '</p>' +
+      '<p style="color: #333; margin: 5px 0; line-height: 1.4;"><strong>Последний раз:</strong> ' + formatTimestamp(node.last_seen) + '</p>' +
+      '<p style="color: #333; margin: 5px 0; line-height: 1.4;"><strong>Уровень батареи:</strong> ' + (node.battery_level || 'N/A') + '%</p>' +
+      '<p style="color: #333; margin: 5px 0; line-height: 1.4;"><strong>Статус:</strong> ' + (node.is_online ? 'Онлайн' : 'Офлайн') + '</p>'
+    );
+    nodeLayer.addLayer(marker);
+  });
+
+  // Process users for map (limited for performance)
+  visibleUsers.slice(0, maxUsers).forEach(function(user) {
+    // Create custom icon for users
+    const customIcon = L.divIcon({
+      className: 'custom-marker',
+      html: `<div style="background-color: #9b59b6; border: 2px solid white; border-radius: 50%; width: 20px; height: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>`,
+      iconSize: [20, 20],
+      iconAnchor: [10, 10]
+    });
+
+    const marker = L.marker([parseFloat(user.lat), parseFloat(user.lng)], { icon: customIcon });
+
+    // Add permanent label
+    const labelText = (user.username || 'Неизвестный') + '<br>' + formatTimestamp(user.last_seen);
+    marker.bindTooltip(labelText, {
+      permanent: true,
+      direction: 'top',
+      offset: [0, -10],
+      className: 'marker-label'
+    });
+
+    marker.bindPopup(
+      '<h3 style="color: #333; margin-bottom: 10px; font-size: 1.1em; font-weight: 600;">👤 ' + (user.username || 'Неизвестный пользователь') + '</h3>' +
+      '<p style="color: #333; margin: 5px 0; line-height: 1.4;"><strong>ID узла:</strong> ' + (user.node_id || 'N/A') + '</p>' +
+      '<p style="color: #333; margin: 5px 0; line-height: 1.4;"><strong>Последний раз:</strong> ' + formatTimestamp(user.last_seen) + '</p>'
+    );
+    userLayer.addLayer(marker);
+  });
+
+  // Process zones for map (limited for performance)
+  visibleZones.slice(0, maxZones).forEach(function(zone) {
+    const circle = L.circle([parseFloat(zone.latitude), parseFloat(zone.longitude)], {
+      radius: zone.radius,
+      color: '#ff4757',
+      fillColor: '#ff6b6b',
+      fillOpacity: 0.3,
+      weight: 2
+    }).bindPopup(
+      '<h3 style="color: #333; margin-bottom: 10px; font-size: 1.1em; font-weight: 600;">🏠 ' + (zone.name || 'Неизвестная зона') + '</h3>' +
+      '<p style="color: #333; margin: 5px 0; line-height: 1.4;"><strong>Радиус:</strong> ' + (zone.radius || 0) + ' метров</p>' +
+      '<p style="color: #333; margin: 5px 0; line-height: 1.4;"><strong>Описание:</strong> ' + (zone.description || 'N/A') + '</p>' +
+      '<p style="color: #333; margin: 5px 0; line-height: 1.4;"><strong>Активна:</strong> ' + (zone.active ? 'Да' : 'Нет') + '</p>'
+    );
+    zoneLayer.addLayer(circle);
+  });
+}
+
+function updateNodeList() {
+  const list = document.getElementById('map-list');
+  list.innerHTML = '';
+
+  // Combine all visible items
+  const allVisibleItems = [
+    ...visibleNodes.map(node => ({ type: 'node', data: node })),
+    ...visibleUsers.map(user => ({ type: 'user', data: user })),
+    ...visibleZones.map(zone => ({ type: 'zone', data: zone }))
+  ];
+
+  // For virtual scrolling, limit to first 50 items and add pagination
+  const pageSize = 50;
+  const totalPages = Math.ceil(allVisibleItems.length / pageSize);
+  let currentPage = 1;
+
+  function renderPage(page) {
+    list.innerHTML = '';
+    const start = (page - 1) * pageSize;
+    const end = start + pageSize;
+    const items = allVisibleItems.slice(start, end);
+
+    items.forEach(function(item) {
+      const li = document.createElement('li');
+      li.className = 'map-node-card';
+
+      if (item.type === 'node') {
+        const node = item.data;
+        // Determine status emoji
+        let statusEmoji = '🔴'; // red for offline
+        if (node.is_online) {
+          if (node.ground_speed && node.ground_speed > 0) {
+            statusEmoji = '🔵'; // blue for moving
+          } else {
+            statusEmoji = '🟢'; // green for online stationary
+          }
+        } else if (node.last_seen) {
+          const lastSeen = new Date(node.last_seen);
+          const now = new Date();
+          const hoursSinceLastSeen = (now - lastSeen) / (1000 * 60 * 60);
+          if (hoursSinceLastSeen < 24) {
+            statusEmoji = '🟠'; // orange for recently seen
+          } else {
+            statusEmoji = '⚫'; // gray for fixed/offline
+          }
+        }
+
+        li.innerHTML = `
+          <div class="node-info">
+            <strong>${statusEmoji} Узел:</strong> ${node.name || 'Неизвестный'} на широте ${node.lat || 'N/A'}, долготе ${node.lng || 'N/A'}
+          </div>
+          <div class="node-actions">
+            <div class="tooltip">
+              <button onclick="showOnMap('${node.id}')" aria-label="Показать узел ${node.name || 'Неизвестный'} на карте" title="Показать на карте">📍</button>
+              <span class="tooltip-text">Показать на карте</span>
+            </div>
+            <div class="tooltip">
+              <button onclick="sendMessage('${node.id}')" aria-label="Отправить сообщение узлу ${node.name || 'Неизвестный'}" title="Отправить сообщение">💬</button>
+              <span class="tooltip-text">Отправить сообщение</span>
+            </div>
+            <div class="tooltip">
+              <button onclick="traceRoute('${node.id}')" aria-label="Показать трассировку маршрута узла ${node.name || 'Неизвестный'}" title="Трассировка">🔍</button>
+              <span class="tooltip-text">Трассировка маршрута</span>
+            </div>
+            <div class="tooltip">
+              <button onclick="showRoute('${node.id}')" aria-label="Показать маршрут узла ${node.name || 'Неизвестный'}" title="Маршрут">🛤️</button>
+              <span class="tooltip-text">Показать маршрут</span>
+            </div>
+          </div>
+        `;
+      } else if (item.type === 'user') {
+        const user = item.data;
+        li.innerHTML = `<strong>👤 Пользователь:</strong> ${user.username} (Узел: ${user.node_id})`;
+      } else if (item.type === 'zone') {
+        const zone = item.data;
+        li.innerHTML = `<strong>🏠 Зона:</strong> ${zone.name} (${zone.active ? 'Активна' : 'Неактивна'})`;
+      }
+
+      list.appendChild(li);
+    });
+
+    // Add pagination controls if needed
+    if (totalPages > 1) {
+      const paginationDiv = document.createElement('div');
+      paginationDiv.style.textAlign = 'center';
+      paginationDiv.style.marginTop = '10px';
+
+      if (page > 1) {
+        const prevBtn = document.createElement('button');
+        prevBtn.textContent = 'Предыдущая';
+        prevBtn.onclick = () => renderPage(page - 1);
+        paginationDiv.appendChild(prevBtn);
+      }
+
+      const pageInfo = document.createElement('span');
+      pageInfo.textContent = ` Страница ${page} из ${totalPages} `;
+      paginationDiv.appendChild(pageInfo);
+
+      if (page < totalPages) {
+        const nextBtn = document.createElement('button');
+        nextBtn.textContent = 'Следующая';
+        nextBtn.onclick = () => renderPage(page + 1);
+        paginationDiv.appendChild(nextBtn);
+      }
+
+      list.appendChild(paginationDiv);
+    }
+  }
+
+  renderPage(currentPage);
+}
+
 
 // Load route data and display on map
 async function loadRoutes() {
-  if (!currentFilters.showRoutes) {
+  if (!currentFilters.showRoutes || !currentFilters.layerVisibility.routes) {
     routeLayer.clearLayers();
     return;
   }
 
+  showLoading('Загрузка маршрутов...', true);
+
   try {
+    updateLoadingProgress(20);
+
     const params = new URLSearchParams({
       hours: currentFilters.timeFilter
     });
@@ -401,12 +1698,16 @@ async function loadRoutes() {
       params.append('node_id', currentFilters.selectedNode);
     }
 
+    updateLoadingProgress(50);
+
     const response = await fetch(`/api/v1/routes?${params}`);
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+      throw new Error(`Не удалось загрузить маршруты: HTTP ${response.status} - ${response.statusText}`);
     }
 
     const routes = await response.json();
+    updateLoadingProgress(80);
+
     routeLayer.clearLayers();
 
     routes.forEach(function(route) {
@@ -427,8 +1728,8 @@ async function loadRoutes() {
 
           const polyline = L.polyline(latlngs, {
             color: routeColor,
-            weight: 3,
-            opacity: 0.7
+            weight: 4,
+            opacity: 0.8
           });
 
           // Add start marker
@@ -436,9 +1737,9 @@ async function loadRoutes() {
           const startMarker = L.marker([parseFloat(startPoint.lat), parseFloat(startPoint.lng)], {
             icon: L.divIcon({
               className: 'route-marker start-marker',
-              html: '<div style="background-color: #2ed573; border: 2px solid white; border-radius: 50%; width: 12px; height: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>',
-              iconSize: [12, 12],
-              iconAnchor: [6, 6]
+              html: '<div style="background-color: #2ed573; border: 3px solid white; border-radius: 50%; width: 16px; height: 16px; box-shadow: 0 2px 6px rgba(0,0,0,0.4); position: relative;"><div style="position: absolute; top: -8px; left: 2px; color: white; font-size: 10px; font-weight: bold;">▶</div></div>',
+              iconSize: [16, 16],
+              iconAnchor: [8, 8]
             })
           }).bindPopup(`<strong>Начало маршрута</strong><br>${route.name}<br>${formatTimestamp(startPoint.timestamp)}`);
 
@@ -447,11 +1748,38 @@ async function loadRoutes() {
           const endMarker = L.marker([parseFloat(endPoint.lat), parseFloat(endPoint.lng)], {
             icon: L.divIcon({
               className: 'route-marker end-marker',
-              html: '<div style="background-color: #ff4757; border: 2px solid white; border-radius: 50%; width: 12px; height: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.3);"></div>',
-              iconSize: [12, 12],
-              iconAnchor: [6, 6]
+              html: '<div style="background-color: #ff4757; border: 3px solid white; border-radius: 50%; width: 16px; height: 16px; box-shadow: 0 2px 6px rgba(0,0,0,0.4); position: relative;"><div style="position: absolute; top: -6px; left: 3px; color: white; font-size: 12px; font-weight: bold;">■</div></div>',
+              iconSize: [16, 16],
+              iconAnchor: [8, 8]
             })
           }).bindPopup(`<strong>Конец маршрута</strong><br>${route.name}<br>${formatTimestamp(endPoint.timestamp)}`);
+
+          // Add direction arrows along the route
+          const arrowInterval = Math.max(5, Math.floor(validPoints.length / 10)); // Add arrows every few points
+          for (let i = arrowInterval; i < validPoints.length - 1; i += arrowInterval) {
+            const currentPoint = validPoints[i];
+            const nextPoint = validPoints[i + 1];
+
+            // Calculate bearing for arrow direction
+            const lat1 = currentPoint.lat * Math.PI / 180;
+            const lat2 = nextPoint.lat * Math.PI / 180;
+            const lng1 = currentPoint.lng * Math.PI / 180;
+            const lng2 = nextPoint.lng * Math.PI / 180;
+
+            const y = Math.sin(lng2 - lng1) * Math.cos(lat2);
+            const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(lng2 - lng1);
+            const bearing = Math.atan2(y, x) * 180 / Math.PI;
+
+            const arrowMarker = L.marker([parseFloat(currentPoint.lat), parseFloat(currentPoint.lng)], {
+              icon: L.divIcon({
+                className: 'route-arrow',
+                html: `<div style="color: ${routeColor}; font-size: 14px; font-weight: bold; transform: rotate(${bearing}deg);">▶</div>`,
+                iconSize: [14, 14],
+                iconAnchor: [7, 7]
+              })
+            });
+            routeLayer.addLayer(arrowMarker);
+          }
 
           // Add popup with route info
           polyline.bindPopup(
@@ -466,8 +1794,22 @@ async function loadRoutes() {
         }
       }
     });
+
+    updateLoadingProgress(100);
+
+    // Store visible routes for exports
+    visibleRoutes = routes;
+
+    hideLoading();
+    showSuccess(`Загружено ${routes.length} маршрутов`);
   } catch (error) {
     console.error('Error loading routes:', error);
+    hideLoading();
+    showError(
+      `Ошибка загрузки маршрутов: ${error.message}`,
+      'error',
+      'loadRoutes()'
+    );
   }
 }
 
@@ -483,20 +1825,94 @@ function handleFilterChange() {
   const nodeFilter = document.querySelector('input[name="nodeFilter"]:checked').value;
   const timeFilter = parseInt(document.getElementById('timeFilter').value);
   const selectedNode = document.getElementById('selectedNode').value;
+  const searchTerm = document.getElementById('searchFilter').value;
 
-  currentFilters = {
-    showRoutes: showRoutes,
-    nodeFilter: nodeFilter,
-    timeFilter: timeFilter,
-    selectedNode: selectedNode
-  };
+  currentFilters.showRoutes = showRoutes;
+  currentFilters.nodeFilter = nodeFilter;
+  currentFilters.timeFilter = timeFilter;
+  currentFilters.selectedNode = selectedNode;
+  currentFilters.searchTerm = searchTerm;
 
   // Show/hide node selector
   const nodeSelector = document.getElementById('nodeSelector');
   nodeSelector.style.display = nodeFilter === 'single' ? 'block' : 'none';
 
+  updateVisibleData();
   loadRoutes();
 }
+
+// Handle status filter changes
+function handleStatusFilterChange() {
+  currentFilters.statusFilters.online = document.getElementById('statusOnline').checked;
+  currentFilters.statusFilters.moving = document.getElementById('statusMoving').checked;
+  currentFilters.statusFilters.offline = document.getElementById('statusOffline').checked;
+  currentFilters.statusFilters.unknown = document.getElementById('statusUnknown').checked;
+
+  updateVisibleData();
+}
+
+// Synchronize UI elements with current filter state
+function synchronizeFilterUI() {
+   // Synchronize search filter
+   document.getElementById('searchFilter').value = currentFilters.searchTerm || '';
+
+   // Synchronize status filters
+   document.getElementById('statusOnline').checked = currentFilters.statusFilters.online;
+   document.getElementById('statusMoving').checked = currentFilters.statusFilters.moving;
+   document.getElementById('statusOffline').checked = currentFilters.statusFilters.offline;
+   document.getElementById('statusUnknown').checked = currentFilters.statusFilters.unknown;
+
+   // Synchronize route filters
+   document.getElementById('showRoutes').checked = currentFilters.showRoutes;
+   document.querySelector(`input[name="nodeFilter"][value="${currentFilters.nodeFilter}"]`).checked = true;
+   document.getElementById('timeFilter').value = currentFilters.timeFilter;
+   document.getElementById('selectedNode').value = currentFilters.selectedNode || '';
+
+   // Show/hide node selector based on current filter
+   const nodeSelector = document.getElementById('nodeSelector');
+   nodeSelector.style.display = currentFilters.nodeFilter === 'single' ? 'block' : 'none';
+
+   // Synchronize layer visibility buttons
+   const layerNames = {
+     nodes: 'Узлы',
+     users: 'Пользователи',
+     zones: 'Зоны',
+     routes: 'Маршруты'
+   };
+
+   Object.keys(currentFilters.layerVisibility).forEach(layer => {
+     const button = document.getElementById('toggle' + layer.charAt(0).toUpperCase() + layer.slice(1));
+     if (button) {
+       if (currentFilters.layerVisibility[layer]) {
+         button.style.background = '#28a745';
+         button.textContent = layerNames[layer] + ' ✓';
+       } else {
+         button.style.background = '#dc3545';
+         button.textContent = layerNames[layer] + ' ✗';
+       }
+     }
+   });
+ }
+
+// Handle layer visibility toggle
+function toggleLayer(layer) {
+   currentFilters.layerVisibility[layer] = !currentFilters.layerVisibility[layer];
+   updateLayerVisibility();
+   synchronizeFilterUI(); // Ensure UI stays synchronized
+
+   const layerNames = {
+     nodes: 'Узлы',
+     users: 'Пользователи',
+     zones: 'Зоны',
+     routes: 'Маршруты'
+   };
+
+   if (currentFilters.layerVisibility[layer]) {
+     showSuccess(`Слой "${layerNames[layer]}" включен`);
+   } else {
+     showSuccess(`Слой "${layerNames[layer]}" отключен`);
+   }
+ }
 
 // Populate node selector
 async function populateNodeSelector() {
@@ -530,7 +1946,8 @@ async function populateNodeSelector() {
 // Initialize map and load data when the page loads
 document.addEventListener('DOMContentLoaded', async function() {
   initMap();
-  loadMapData();
+  connectWebSocket();
+  loadAllData();
   await populateNodeSelector();
 
   // Set up filter event listeners
@@ -540,6 +1957,62 @@ document.addEventListener('DOMContentLoaded', async function() {
   });
   document.getElementById('timeFilter').addEventListener('change', handleFilterChange);
   document.getElementById('selectedNode').addEventListener('change', handleFilterChange);
+  document.getElementById('searchFilter').addEventListener('input', handleFilterChange);
+
+  // Status filter event listeners
+  document.getElementById('statusOnline').addEventListener('change', handleStatusFilterChange);
+  document.getElementById('statusMoving').addEventListener('change', handleStatusFilterChange);
+  document.getElementById('statusOffline').addEventListener('change', handleStatusFilterChange);
+  document.getElementById('statusUnknown').addEventListener('change', handleStatusFilterChange);
+
+  // Layer toggle event listeners
+  document.getElementById('toggleNodes').addEventListener('click', () => toggleLayer('nodes'));
+  document.getElementById('toggleUsers').addEventListener('click', () => toggleLayer('users'));
+  document.getElementById('toggleZones').addEventListener('click', () => toggleLayer('zones'));
+  document.getElementById('toggleRoutes').addEventListener('click', () => toggleLayer('routes'));
+
+  // Export button event listeners
+  document.getElementById('exportGPX').addEventListener('click', () => exportData('gpx'));
+  document.getElementById('exportCSV').addEventListener('click', () => exportData('csv'));
+  document.getElementById('exportJSON').addEventListener('click', () => exportData('json'));
+
+  // Keyboard navigation
+  document.addEventListener('keydown', handleKeyboardShortcuts);
+
+  // Initial layer visibility update
+  updateLayerVisibility();
+
+  // Cleanup on page unload
+  window.addEventListener('beforeunload', function() {
+    disconnectWebSocket();
+    if (loadTimeout) {
+      clearTimeout(loadTimeout);
+    }
+    // Note: Modal cleanup is handled by individual modal close handlers
+  });
+});
+
+// Enhanced export function with feedback
+function exportData(format) {
+  try {
+    switch (format) {
+      case 'gpx':
+        exportGPX();
+        showSuccess('GPX файл экспортирован');
+        break;
+      case 'csv':
+        exportCSV();
+        showSuccess('CSV файл экспортирован');
+        break;
+      case 'json':
+        exportJSON();
+        showSuccess('JSON файл экспортирован');
+        break;
+    }
+  } catch (error) {
+    showError(`Ошибка экспорта ${format.toUpperCase()}: ${error.message}`, 'error');
+  }
+}
 
 // Action button functions
 function showOnMap(nodeId) {
@@ -587,6 +2060,19 @@ function sendMessage(nodeId) {
 
   document.body.appendChild(modal);
 
+  // Add cleanup on modal close
+  const closeBtn = modal.querySelector('.close');
+  closeBtn.onclick = function() {
+    modal.remove();
+  };
+
+  // Cleanup when clicking outside modal
+  modal.addEventListener('click', function(event) {
+    if (event.target === modal) {
+      modal.remove();
+    }
+  });
+
   // Load channels for channel selection
   fetch('/api/v1/channels')
     .then(response => response.json())
@@ -629,15 +2115,15 @@ function sendMessage(nodeId) {
     .then(response => response.json())
     .then(data => {
       if (data.success) {
-        alert('Сообщение отправлено успешно');
+        showSuccess('Сообщение отправлено успешно');
         modal.remove();
       } else {
-        alert('Ошибка отправки сообщения');
+        showError('Ошибка отправки сообщения: ' + (data.message || 'Неизвестная ошибка'), 'error');
       }
     })
     .catch(error => {
       console.error('Error sending message:', error);
-      alert('Ошибка отправки сообщения');
+      showError('Ошибка отправки сообщения: ' + error.message, 'error');
     });
   });
 
@@ -645,16 +2131,43 @@ function sendMessage(nodeId) {
   modal.style.display = 'block';
 }
 
+// Utility functions for route calculations
+function calculateDistance(lat1, lng1, lat2, lng2) {
+  const R = 6371; // Earth's radius in kilometers
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLng = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLng/2) * Math.sin(dLng/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c * 1000; // Return meters
+}
+
+function calculateTimeDifference(timestamp1, timestamp2) {
+  return Math.abs(timestamp2 - timestamp1) / 1000; // Return seconds
+}
+
+function formatDuration(seconds) {
+  if (seconds < 60) return `${Math.round(seconds)}с`;
+  if (seconds < 3600) return `${Math.round(seconds/60)}м`;
+  return `${Math.round(seconds/3600)}ч`;
+}
+
+function formatSpeed(metersPerSecond) {
+  const kmh = metersPerSecond * 3.6;
+  return `${kmh.toFixed(1)} км/ч`;
+}
+
 function traceRoute(nodeId) {
-  // Show trace route modal with detailed route information
+  // Show packet tracing modal
   const modal = document.createElement('div');
   modal.className = 'modal';
   modal.innerHTML = `
-    <div class="modal-content" style="max-width: 800px;">
+    <div class="modal-content" style="max-width: 1200px; max-height: 80vh; overflow-y: auto;">
       <span class="close" onclick="this.closest('.modal').remove()">&times;</span>
-      <h3>Трассировка маршрута узла ${nodeId}</h3>
+      <h3>Трассировка пакетов узла ${nodeId}</h3>
       <div id="traceContent">
-        <p>Загрузка данных трассировки...</p>
+        <p>Инициирование трассировки пакетов...</p>
       </div>
     </div>
   `;
@@ -662,76 +2175,357 @@ function traceRoute(nodeId) {
   document.body.appendChild(modal);
   modal.style.display = 'block';
 
-  // Load detailed route data
-  fetch(`/api/v1/routes?node_id=${nodeId}&hours=24`)
-    .then(response => response.json())
-    .then(routes => {
-      const content = modal.querySelector('#traceContent');
-      if (routes.length === 0) {
-        content.innerHTML = '<p>Нет данных о маршруте для этого узла.</p>';
-        return;
+  // Add cleanup on modal close
+  const closeBtn = modal.querySelector('.close');
+  closeBtn.onclick = function() {
+    cleanupTraceLayers();
+    modal.remove();
+  };
+
+  // Also cleanup when clicking outside modal
+  modal.addEventListener('click', function(event) {
+    if (event.target === modal) {
+      cleanupTraceLayers();
+      modal.remove();
+    }
+  });
+
+  let traceLayers = [];
+  let pollTimeout = null;
+
+  // Cleanup function for trace layers
+  function cleanupTraceLayers() {
+    traceLayers.forEach(layer => {
+      if (map.hasLayer(layer)) {
+        map.removeLayer(layer);
       }
-
-      const route = routes[0];
-      let html = `<h4>Маршрут: ${route.name}</h4>`;
-      html += `<p>Всего точек: ${route.points.length}</p>`;
-      html += `<p>Последний сигнал: ${formatTimestamp(route.last_seen)}</p>`;
-
-      if (route.points.length > 0) {
-        html += '<h5>Точки маршрута:</h5><ul>';
-        route.points.forEach((point, index) => {
-          html += `<li>Точка ${index + 1}: ${point.lat.toFixed(6)}, ${point.lng.toFixed(6)} - ${formatTimestamp(point.timestamp)}</li>`;
-        });
-        html += '</ul>';
-      }
-
-      content.innerHTML = html;
-    })
-    .catch(error => {
-      console.error('Error loading trace data:', error);
-      modal.querySelector('#traceContent').innerHTML = '<p>Ошибка загрузки данных трассировки.</p>';
     });
+    traceLayers = [];
+    if (pollTimeout) {
+      clearTimeout(pollTimeout);
+      pollTimeout = null;
+    }
+  }
+
+  // Function to poll traceroute status
+  function pollTraceroute(requestId) {
+    fetch(`/api/v1/traceroute/${requestId}`)
+      .then(response => response.json())
+      .then(data => {
+        const content = modal.querySelector('#traceContent');
+
+        if (data.status === 'pending') {
+          content.innerHTML = '<p>Трассировка пакетов выполняется... Пожалуйста, подождите.</p>';
+          pollTimeout = setTimeout(() => pollTraceroute(requestId), 2000); // Poll every 2 seconds
+        } else if (data.status === 'completed') {
+          displayTracerouteResults(data);
+        } else if (data.status === 'failed') {
+          content.innerHTML = `<p style="color: red;">Ошибка трассировки пакетов: ${data.error || 'Неизвестная ошибка'}</p>`;
+          showError('Трассировка пакетов не удалась', 'error');
+        }
+      })
+      .catch(error => {
+        console.error('Error polling traceroute:', error);
+        modal.querySelector('#traceContent').innerHTML = '<p style="color: red;">Ошибка при получении результатов трассировки.</p>';
+        showError('Ошибка трассировки пакетов', 'error');
+      });
+  }
+
+  // Function to display traceroute results
+  function displayTracerouteResults(data) {
+    const content = modal.querySelector('#traceContent');
+
+    let html = `<h4>Результаты трассировки пакетов</h4>`;
+    html += `<p>Статус: Завершено</p>`;
+    html += `<p>Всего хопов: ${data.hops.length}</p>`;
+
+    if (data.hops.length > 0) {
+      // Draw packet path on map
+      drawPacketPath(data.hops);
+
+      html += `
+        <div style="margin-top: 15px;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+            <thead>
+              <tr style="background: #f8f9fa;">
+                <th style="border: 1px solid #ddd; padding: 8px; text-align: center;">Хоп</th>
+                <th style="border: 1px solid #ddd; padding: 8px;">ID узла</th>
+                <th style="border: 1px solid #ddd; padding: 8px;">SNR</th>
+                <th style="border: 1px solid #ddd; padding: 8px;">Время ответа (мс)</th>
+                <th style="border: 1px solid #ddd; padding: 8px;">Действия</th>
+              </tr>
+            </thead>
+            <tbody>
+      `;
+
+      data.hops.forEach((hop, index) => {
+        html += `
+          <tr>
+            <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">${hop.hop}</td>
+            <td style="border: 1px solid #ddd; padding: 8px;">${hop.node_id}</td>
+            <td style="border: 1px solid #ddd; padding: 8px;">${hop.snr ? hop.snr.toFixed(1) : 'N/A'}</td>
+            <td style="border: 1px solid #ddd; padding: 8px;">${hop.response_time || 'N/A'}</td>
+            <td style="border: 1px solid #ddd; padding: 8px; text-align: center;">
+              <button onclick="zoomToPoint(${hop.lat}, ${hop.lng})" style="padding: 4px 8px; font-size: 11px; background: #17a2b8; color: white; border: none; border-radius: 3px; cursor: pointer;">Показать</button>
+            </td>
+          </tr>
+        `;
+      });
+
+      html += `
+            </tbody>
+          </table>
+        </div>
+      `;
+    } else {
+      html += '<p>Хопы не найдены.</p>';
+    }
+
+    content.innerHTML = html;
+    showSuccess('Трассировка пакетов завершена');
+  }
+
+  // Function to draw packet path on map
+  function drawPacketPath(hops) {
+    cleanupTraceLayers();
+
+    if (hops.length < 2) return;
+
+    // Draw lines connecting hops
+    const latlngs = hops.map(hop => [parseFloat(hop.lat), parseFloat(hop.lng)]);
+    const polyline = L.polyline(latlngs, {
+      color: '#ff4757',
+      weight: 3,
+      opacity: 0.8
+    });
+    polyline.addTo(map);
+    traceLayers.push(polyline);
+
+    // Add markers for each hop
+    hops.forEach((hop, index) => {
+      const marker = L.marker([parseFloat(hop.lat), parseFloat(hop.lng)], {
+        icon: L.divIcon({
+          className: 'hop-marker',
+          html: `<div style="background-color: #ff4757; border: 2px solid white; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.3);">${hop.hop}</div>`,
+          iconSize: [24, 24],
+          iconAnchor: [12, 12]
+        })
+      });
+
+      marker.bindPopup(`
+        <strong>Хоп ${hop.hop}</strong><br>
+        Узел: ${hop.node_id}<br>
+        SNR: ${hop.snr ? hop.snr.toFixed(1) : 'N/A'}<br>
+        Время ответа: ${hop.response_time || 'N/A'} мс
+      `);
+
+      marker.addTo(map);
+      traceLayers.push(marker);
+    });
+
+    // Fit map to show all hops
+    const group = new L.featureGroup(traceLayers);
+    map.fitBounds(group.getBounds().pad(0.1));
+  }
+
+  // Initiate traceroute
+  fetch('/api/v1/traceroute', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ node_id: nodeId })
+  })
+  .then(response => response.json())
+  .then(data => {
+    if (data.request_id) {
+      pollTraceroute(data.request_id);
+    } else if (data.status === 'completed') {
+      displayTracerouteResults(data);
+    } else if (data.status === 'failed') {
+      modal.querySelector('#traceContent').innerHTML = `<p style="color: red;">Ошибка трассировки пакетов: ${data.error || 'Неизвестная ошибка'}</p>`;
+      showError('Трассировка пакетов не удалась', 'error');
+    } else {
+      modal.querySelector('#traceContent').innerHTML = '<p style="color: red;">Неожиданный ответ от сервера.</p>';
+      showError('Ошибка инициирования трассировки', 'error');
+    }
+  })
+  .catch(error => {
+    console.error('Error initiating traceroute:', error);
+    modal.querySelector('#traceContent').innerHTML = '<p style="color: red;">Ошибка инициирования трассировки пакетов.</p>';
+    showError('Ошибка трассировки пакетов', 'error');
+  });
+}
+
+// Function to zoom to a specific point
+function zoomToPoint(lat, lng) {
+  map.setView([lat, lng], 18);
+  // Add a temporary marker to highlight the point
+  const tempMarker = L.marker([lat, lng], {
+    icon: L.divIcon({
+      className: 'temp-highlight',
+      html: '<div style="background-color: #ff4757; border: 3px solid white; border-radius: 50%; width: 20px; height: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.6);"></div>',
+      iconSize: [20, 20],
+      iconAnchor: [10, 10]
+    })
+  }).addTo(map);
+
+  setTimeout(() => {
+    map.removeLayer(tempMarker);
+  }, 3000);
 }
 
 function showRoute(nodeId) {
-  // Show 24h route on map by temporarily filtering to this node only
-  const originalFilters = { ...currentFilters };
+   // Show 24h route on map by temporarily filtering to this node only
+   const originalFilters = JSON.parse(JSON.stringify(currentFilters)); // Deep copy
 
-  // Set filters to show only this node's route
-  currentFilters.showRoutes = true;
-  currentFilters.nodeFilter = 'single';
-  currentFilters.selectedNode = nodeId;
-  currentFilters.timeFilter = 24;
+   // Set filters to show only this node's route
+   currentFilters.showRoutes = true;
+   currentFilters.layerVisibility.routes = true;
+   currentFilters.nodeFilter = 'single';
+   currentFilters.selectedNode = nodeId;
+   currentFilters.timeFilter = 24;
 
-  // Update UI to reflect new filters
-  document.getElementById('showRoutes').checked = true;
-  document.querySelector('input[name="nodeFilter"][value="single"]').checked = true;
-  document.getElementById('timeFilter').value = '24';
-  document.getElementById('selectedNode').value = nodeId;
-  document.getElementById('nodeSelector').style.display = 'block';
+   // Synchronize UI with new filter state
+   synchronizeFilterUI();
+   updateLayerVisibility();
 
-  // Load and display the route
-  loadRoutes();
+   // Load and display the route
+   loadRoutes();
 
-  // Center map on the route
-  setTimeout(() => {
-    if (routeLayer.getLayers().length > 0) {
-      const group = new L.featureGroup(routeLayer.getLayers());
-      map.fitBounds(group.getBounds().pad(0.1));
-    }
-  }, 500);
+   // Center map on the route
+   setTimeout(() => {
+     if (routeLayer.getLayers().length > 0) {
+       const group = new L.featureGroup(routeLayer.getLayers());
+       map.fitBounds(group.getBounds().pad(0.1));
+     }
+   }, 500);
 
-  // Reset filters after 10 seconds
-  setTimeout(() => {
-    currentFilters = { ...originalFilters };
-    // Update UI to reflect original filters
-    document.getElementById('showRoutes').checked = originalFilters.showRoutes;
-    document.querySelector(`input[name="nodeFilter"][value="${originalFilters.nodeFilter}"]`).checked = true;
-    document.getElementById('timeFilter').value = originalFilters.timeFilter;
-    document.getElementById('selectedNode').value = originalFilters.selectedNode;
-    document.getElementById('nodeSelector').style.display = originalFilters.nodeFilter === 'single' ? 'block' : 'none';
-    loadRoutes();
-  }, 10000);
+   // Reset filters after 10 seconds
+   setTimeout(() => {
+     currentFilters = JSON.parse(JSON.stringify(originalFilters)); // Restore deep copy
+     synchronizeFilterUI(); // Synchronize UI with restored filters
+     updateLayerVisibility();
+     loadRoutes();
+     showSuccess('Фильтры маршрута сброшены');
+   }, 10000);
+ }
+
+// Export functions
+function downloadFile(content, filename, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportGPX() {
+  let gpx = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="FF-BBS Map" xmlns="http://www.topografix.com/GPX/1/1">
+`;
+
+  // Waypoints for nodes
+  if (currentFilters.layerVisibility.nodes) {
+    visibleNodes.forEach(node => {
+      gpx += `  <wpt lat="${node.lat}" lon="${node.lng}">
+    <name>${node.name || 'Node'}</name>
+    <desc>Node ID: ${node.id}</desc>
+  </wpt>
+`;
+    });
+  }
+
+  // Waypoints for users
+  if (currentFilters.layerVisibility.users) {
+    visibleUsers.forEach(user => {
+      gpx += `  <wpt lat="${user.lat}" lon="${user.lng}">
+    <name>${user.username || 'User'}</name>
+    <desc>User Node ID: ${user.node_id}</desc>
+  </wpt>
+`;
+    });
+  }
+
+  // Waypoints for zones
+  if (currentFilters.layerVisibility.zones) {
+    visibleZones.forEach(zone => {
+      gpx += `  <wpt lat="${zone.latitude}" lon="${zone.longitude}">
+    <name>${zone.name || 'Zone'}</name>
+    <desc>Radius: ${zone.radius}m</desc>
+  </wpt>
+`;
+    });
+  }
+
+  // Tracks for routes
+  if (currentFilters.layerVisibility.routes) {
+    visibleRoutes.forEach(route => {
+      if (route.points && route.points.length > 0) {
+        gpx += `  <trk>
+    <name>${route.name}</name>
+    <trkseg>
+`;
+        route.points.sort((a, b) => a.timestamp - b.timestamp).forEach(point => {
+          const time = new Date(point.timestamp).toISOString();
+          gpx += `      <trkpt lat="${point.lat}" lon="${point.lng}">
+        <time>${time}</time>
+      </trkpt>
+`;
+        });
+        gpx += `    </trkseg>
+  </trk>
+`;
+      }
+    });
+  }
+
+  gpx += `</gpx>`;
+  downloadFile(gpx, 'map_data.gpx', 'application/gpx+xml');
+}
+
+function exportCSV() {
+  let csv = 'Type,Name,ID,Latitude,Longitude,Timestamp,Extra\n';
+
+  if (currentFilters.layerVisibility.nodes) {
+    visibleNodes.forEach(node => {
+      csv += `Node,"${node.name || ''}",${node.id},${node.lat},${node.lng},"${node.last_seen || ''}",\n`;
+    });
+  }
+
+  if (currentFilters.layerVisibility.users) {
+    visibleUsers.forEach(user => {
+      csv += `User,"${user.username || ''}","${user.node_id || ''}",${user.lat},${user.lng},"${user.last_seen || ''}",\n`;
+    });
+  }
+
+  if (currentFilters.layerVisibility.zones) {
+    visibleZones.forEach(zone => {
+      csv += `Zone,"${zone.name || ''}",,${zone.latitude},${zone.longitude},,"Radius: ${zone.radius}"\n`;
+    });
+  }
+
+  if (currentFilters.layerVisibility.routes) {
+    visibleRoutes.forEach(route => {
+      if (route.points) {
+        route.points.forEach(point => {
+          csv += `Route,"${route.name}","${route.node_id || ''}",${point.lat},${point.lng},"${point.timestamp}",\n`;
+        });
+      }
+    });
+  }
+
+  downloadFile(csv, 'map_data.csv', 'text/csv');
+}
+
+function exportJSON() {
+  const data = {};
+  if (currentFilters.layerVisibility.nodes) data.nodes = visibleNodes;
+  if (currentFilters.layerVisibility.users) data.users = visibleUsers;
+  if (currentFilters.layerVisibility.zones) data.zones = visibleZones;
+  if (currentFilters.layerVisibility.routes) data.routes = visibleRoutes;
+  const json = JSON.stringify(data, null, 2);
+  downloadFile(json, 'map_data.json', 'application/json');
 }
 
 // Utility function to scroll modal into view
@@ -740,7 +2534,5 @@ function scrollModalIntoView(modal) {
     modal.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 }
-  setInterval(loadMapData, 10000);
-});
 </script>
 {% endblock %}

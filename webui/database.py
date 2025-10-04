@@ -93,14 +93,13 @@ def init_db():
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS triggers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        geofence_id INTEGER NOT NULL,
-        condition TEXT NOT NULL CHECK (condition IN ('enter', 'exit')),
-        action TEXT NOT NULL,
-        parameters TEXT DEFAULT '{}',
-        active INTEGER DEFAULT 1,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (geofence_id) REFERENCES geofences (id) ON DELETE CASCADE
+        name TEXT,
+        description TEXT,
+        zone_id INTEGER NOT NULL,
+        event_type TEXT NOT NULL CHECK (event_type IN ('enter', 'exit')),
+        action_type TEXT NOT NULL,
+        action_payload TEXT DEFAULT '{}',
+        FOREIGN KEY (zone_id) REFERENCES zones (id) ON DELETE CASCADE
     )
     ''')
 
@@ -232,6 +231,22 @@ def init_db():
     )
     ''')
 
+    # Таблица для трассировки маршрутов (Route Traces)
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS route_traces (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_node_id TEXT NOT NULL,
+        dest_node_id TEXT NOT NULL,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        hops TEXT,  -- JSON array of hop data with node_id and snr
+        status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'completed', 'failed')),
+        response_time REAL,
+        error_message TEXT,
+        FOREIGN KEY (source_node_id) REFERENCES nodes (node_id),
+        FOREIGN KEY (dest_node_id) REFERENCES nodes (node_id)
+    )
+    ''')
+
     # Индексы для новых таблиц
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_node_id ON alerts(node_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_user_id ON alerts(user_id)')
@@ -254,8 +269,14 @@ def init_db():
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_nodes_last_seen ON nodes(last_seen)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_forum_posts_author_id ON forum_posts(author_id)')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_triggers_geofence_id ON triggers(geofence_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_triggers_zone_id ON triggers(zone_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_commands_queue_sender_user_id ON commands_queue(sender_user_id)')
+
+    # Индексы для route_traces
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_route_traces_source_node_id ON route_traces(source_node_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_route_traces_dest_node_id ON route_traces(dest_node_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_route_traces_timestamp ON route_traces(timestamp)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_route_traces_status ON route_traces(status)')
 
     # Ensure users table has all columns
     cursor.execute("PRAGMA table_info(users)")

@@ -2,8 +2,8 @@
 
 {% block content %}
 <!-- Modal for creating/editing alert -->
-<div id="editModal" style="display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5);">
-  <div style="background-color: white; margin: 15% auto; padding: 20px; border: 1px solid #888; width: 80%; max-width: 500px; border-radius: 8px;">
+<div id="editModal" class="modal">
+  <div class="modal-content">
     <span id="closeEditModal" style="color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer;">&times;</span>
     <h2 id="modalTitle">Создать оповещение</h2>
     <form id="editForm">
@@ -44,17 +44,17 @@
 </div>
 
 <!-- Alerts Management Section -->
-<div style="padding: 20px; background: rgba(255,255,255,0.1); border-radius: 8px;">
+<div class="content-block">
   <h2>Системные оповещения</h2>
-  <button id="createAlertBtn" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; margin-bottom: 15px;">Создать оповещение</button>
+  <button id="createAlertBtn" class="btn" style="margin-bottom: 15px;">Создать оповещение</button>
 
   <!-- Filters -->
-  <div style="margin-bottom: 20px; padding: 15px; background: rgba(255,255,255,0.05); border-radius: 8px;">
+  <div class="filter-panel">
     <h3>Фильтры</h3>
     <div style="display: flex; gap: 15px; flex-wrap: wrap;">
       <div>
         <label for="statusFilter">Статус:</label>
-        <select id="statusFilter" style="padding: 5px;">
+        <select id="statusFilter">
           <option value="">Все</option>
           <option value="active">Активные</option>
           <option value="acknowledged">Подтвержденные</option>
@@ -63,7 +63,7 @@
       </div>
       <div>
         <label for="typeFilter">Тип:</label>
-        <select id="typeFilter" style="padding: 5px;">
+        <select id="typeFilter">
           <option value="">Все</option>
           <option value="system">Система</option>
           <option value="node">Узел</option>
@@ -71,22 +71,22 @@
           <option value="security">Безопасность</option>
         </select>
       </div>
-      <button id="applyFiltersBtn" style="padding: 5px 15px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Применить</button>
+      <button id="applyFiltersBtn" class="btn">Применить</button>
     </div>
   </div>
 
   <div id="loading" style="text-align: center; margin: 20px;">Загрузка оповещений...</div>
-  <table id="alerts-table" style="display: none; width: 100%; border-collapse: collapse; margin-top: 10px;">
+  <table id="alerts-table" style="display: none;">
     <thead>
       <tr>
-        <th style="border: 1px solid #ccc; padding: 10px;">Тип</th>
-        <th style="border: 1px solid #ccc; padding: 10px;">Сообщение</th>
-        <th style="border: 1px solid #ccc; padding: 10px;">Серьезность</th>
-        <th style="border: 1px solid #ccc; padding: 10px;">Статус</th>
-        <th style="border: 1px solid #ccc; padding: 10px;">ID узла</th>
-        <th style="border: 1px solid #ccc; padding: 10px;">ID пользователя</th>
-        <th style="border: 1px solid #ccc; padding: 10px;">Время</th>
-        <th style="border: 1px solid #ccc; padding: 10px;">Действия</th>
+        <th>Тип</th>
+        <th>Сообщение</th>
+        <th>Серьезность</th>
+        <th>Статус</th>
+        <th>ID узла</th>
+        <th>ID пользователя</th>
+        <th>Время</th>
+        <th>Действия</th>
       </tr>
     </thead>
     <tbody id="alerts-body">
@@ -194,20 +194,22 @@ document.addEventListener('DOMContentLoaded', function() {
             if (alert.status === 'active') {
               const acknowledgeBtn = document.createElement('button');
               acknowledgeBtn.textContent = 'Подтвердить';
-              acknowledgeBtn.style = 'padding: 5px 10px; background: #ffc107; color: black; border: none; border-radius: 4px; cursor: pointer; margin-right: 5px;';
+              acknowledgeBtn.className = 'btn';
+              acknowledgeBtn.style.marginRight = '5px';
               acknowledgeBtn.onclick = () => updateAlertStatus(alert.id, 'acknowledged');
               actionCell.appendChild(acknowledgeBtn);
             }
 
             const resolveBtn = document.createElement('button');
             resolveBtn.textContent = 'Разрешить';
-            resolveBtn.style = 'padding: 5px 10px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; margin-right: 5px;';
+            resolveBtn.className = 'btn';
+            resolveBtn.style.marginRight = '5px';
             resolveBtn.onclick = () => updateAlertStatus(alert.id, 'resolved');
             actionCell.appendChild(resolveBtn);
 
             const deleteBtn = document.createElement('button');
             deleteBtn.textContent = 'Удалить';
-            deleteBtn.style = 'padding: 5px 10px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;';
+            deleteBtn.className = 'btn';
             deleteBtn.onclick = () => deleteAlert(alert.id);
             actionCell.appendChild(deleteBtn);
           });

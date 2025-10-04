@@ -8,6 +8,7 @@ import sys
 import functools
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from modules.log import logger
+from .cache import get_cache_manager
 
 # Optional import for psutil
 try:
@@ -91,6 +92,11 @@ def update_node(node_id, **kwargs):
         query = f"UPDATE nodes SET {set_parts} WHERE node_id = ?"
         conn.execute(query, values)
         conn.commit()
+
+        # Invalidate nodes cache
+        cache = get_cache_manager()
+        cache.delete(cache.get_nodes_cache_key())
+        logger.debug(f"Invalidated nodes cache after update for {node_id}")
     finally:
         conn.close()
 
@@ -381,21 +387,21 @@ def delete_geofence(geofence_id):
     finally:
         conn.close()
 
-def get_triggers(request=None, geofence_id=None):
-    """Retrieve triggers, optionally filtered by geofence_id."""
+def get_triggers(request=None, zone_id=None):
+    """Retrieve triggers, optionally filtered by zone_id."""
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
-        if geofence_id is None:
+        if zone_id is None:
             cursor.execute("SELECT * FROM triggers ORDER BY id")
         else:
-            cursor.execute("SELECT * FROM triggers WHERE geofence_id = ? ORDER BY id", (geofence_id,))
+            cursor.execute("SELECT * FROM triggers WHERE zone_id = ? ORDER BY id", (zone_id,))
         rows = cursor.fetchall()
         columns = [description[0] for description in cursor.description]
         triggers = [dict(zip(columns, row)) for row in rows]
         for trigger in triggers:
-            if trigger['parameters']:
-                trigger['parameters'] = json.loads(trigger['parameters'])
+            if trigger['action_payload']:
+                trigger['action_payload'] = json.loads(trigger['action_payload'])
         return triggers
     finally:
         conn.close()
@@ -410,37 +416,37 @@ def get_trigger(trigger_id):
         if row:
             columns = [description[0] for description in cursor.description]
             trigger = dict(zip(columns, row))
-            if trigger['parameters']:
-                trigger['parameters'] = json.loads(trigger['parameters'])
+            if trigger['action_payload']:
+                trigger['action_payload'] = json.loads(trigger['action_payload'])
             return trigger
         return None
     finally:
         conn.close()
 
-def create_trigger(geofence_id, condition, action, parameters='{}', active=1):
+def create_trigger(zone_id, event_type, action_type, action_payload='{}', name='', description=''):
     """Create a new trigger."""
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
         cursor.execute(
-            """INSERT INTO triggers (geofence_id, condition, action, parameters, active)
-               VALUES (?, ?, ?, ?, ?)""",
-            (geofence_id, condition, action, parameters, active)
+            """INSERT INTO triggers (zone_id, event_type, action_type, action_payload, name, description)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (zone_id, event_type, action_type, action_payload, name, description)
         )
         conn.commit()
         return cursor.lastrowid
     finally:
         conn.close()
 
-def update_trigger(trigger_id, geofence_id, condition, action, parameters='{}', active=1):
+def update_trigger(trigger_id, zone_id, event_type, action_type, action_payload='{}', name='', description=''):
     """Update an existing trigger."""
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
         cursor.execute(
-            """UPDATE triggers SET geofence_id = ?, condition = ?, action = ?, parameters = ?, active = ?, updated_at = CURRENT_TIMESTAMP
+            """UPDATE triggers SET zone_id = ?, event_type = ?, action_type = ?, action_payload = ?, name = ?, description = ?
                WHERE id = ?""",
-            (geofence_id, condition, action, parameters, active, trigger_id)
+            (zone_id, event_type, action_type, action_payload, name, description, trigger_id)
         )
         conn.commit()
         return cursor.rowcount > 0
@@ -552,14 +558,29 @@ def delete_user(user_id):
     finally:
         conn.close()
 def get_nodes(request=None):
-    """Get list of all nodes."""
+    """Get list of all nodes with caching."""
+    cache = get_cache_manager()
+    cache_key = cache.get_nodes_cache_key()
+
+    # Try cache first
+    cached_data = cache.get(cache_key)
+    if cached_data:
+        logger.debug("Returning nodes from cache")
+        return cached_data
+
+    # Cache miss, query database
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM nodes ORDER BY last_seen DESC")
         rows = cursor.fetchall()
         columns = [description[0] for description in cursor.description]
-        return [dict(zip(columns, row)) for row in rows]
+        nodes = [dict(zip(columns, row)) for row in rows]
+
+        # Cache for 30 seconds
+        cache.set(cache_key, nodes, ttl=30)
+        logger.debug("Cached nodes data")
+        return nodes
     finally:
         conn.close()
 
@@ -1289,14 +1310,29 @@ def update_process_run_count(process_id):
 
 # Zones management functions
 def get_zones():
-    """Get all geo-zones."""
+    """Get all geo-zones with caching."""
+    cache = get_cache_manager()
+    cache_key = cache.get_zones_cache_key()
+
+    # Try cache first
+    cached_data = cache.get(cache_key)
+    if cached_data:
+        logger.debug("Returning zones from cache")
+        return cached_data
+
+    # Cache miss, query database
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM zones ORDER BY name")
         rows = cursor.fetchall()
         columns = [description[0] for description in cursor.description]
-        return [dict(zip(columns, row)) for row in rows]
+        zones = [dict(zip(columns, row)) for row in rows]
+
+        # Cache for 10 minutes
+        cache.set(cache_key, zones, ttl=600)
+        logger.debug("Cached zones data")
+        return zones
     finally:
         conn.close()
 
@@ -1389,6 +1425,7 @@ def get_active_zones():
     finally:
         conn.close()
 
+@retry_on_lock()
 def update_message_delivery_status(message_id, delivered=None, retry_count=None, delivery_attempts=None):
     """Update delivery status of a message."""
     conn = get_db_connection()
@@ -1444,5 +1481,32 @@ def get_message_by_id(message_id):
             columns = [description[0] for description in cursor.description]
             return dict(zip(columns, row))
         return None
+    finally:
+        conn.close()
+
+@retry_on_lock()
+def insert_telemetry(node_id, timestamp, latitude, longitude, altitude, ground_speed):
+    """Insert telemetry data into the telemetry table."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO telemetry (node_id, timestamp, latitude, longitude, altitude, ground_speed) VALUES (?, ?, ?, ?, ?, ?)",
+            (node_id, timestamp, latitude, longitude, altitude, ground_speed)
+        )
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+@retry_on_lock()
+def mark_messages_delivered_to_node(node_id):
+    """Mark all undelivered messages addressed to a specific node as delivered."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE messages SET delivered = 1 WHERE to_node_id = ? AND delivered = 0", (str(node_id),))
+        conn.commit()
+        return cursor.rowcount
     finally:
         conn.close()

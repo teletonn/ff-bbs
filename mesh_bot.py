@@ -1,6 +1,5 @@
 #!/usr/bin/python3
-# Meshtastic Autoresponder MESH Bot
-# K7MHI Kelly Keeton 2025
+# Meshtastic FF-BBS MESH Bot
 
 try:
     from pubsub import pub
@@ -20,6 +19,15 @@ from webui import db_handler
 import json
 from datetime import datetime
 import math
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), 'webui'))
+try:
+    from main import broadcast_map_update
+except ImportError:
+    # If import fails, create a dummy function
+    async def broadcast_map_update(update_type, data):
+        pass
 
 # --- Localization ---
 
@@ -41,9 +49,59 @@ def handle_send_message(cmd):
     logging.info(f"Handling send_message from user {sender_user_id}, node_id {sender_node_id}, params {params}")
     return send_message(params['message'], int(params.get('channel', 0)), int(params.get('target', 0)), 1)
 
+def handle_traceroute(cmd):
+    import sqlite3
+    params = json.loads(cmd['parameters'])
+    dest_node_id = int(params['dest_node_id'])
+    trace_id = params['trace_id']
+
+    # Use interface1 for traceroute (can be improved to select appropriate interface)
+    interface = interface1
+    try:
+        start_time = time.time()
+        result = interface.sendTraceRoute(dest_node_id, wantResponse=True)
+        response_time = time.time() - start_time
+
+        # Parse the result - result is a RouteDiscovery message
+        hops = []
+        if result and hasattr(result, 'route'):
+            for hop in result.route:
+                hops.append({
+                    'node_id': str(hop.node_id),
+                    'snr': float(hop.snr) if hop.snr else None
+                })
+
+        # Update database
+        conn = db_handler.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE route_traces
+            SET status = 'completed', hops = ?, response_time = ?, timestamp = ?
+            WHERE id = ?
+        """, (json.dumps(hops), response_time, time.time(), trace_id))
+        conn.commit()
+        conn.close()
+
+        logging.info(f"Traceroute completed for trace_id {trace_id}, dest {dest_node_id}")
+
+    except Exception as e:
+        # Update database with failure
+        conn = db_handler.get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE route_traces
+            SET status = 'failed', error_message = ?, timestamp = ?
+            WHERE id = ?
+        """, (str(e), time.time(), trace_id))
+        conn.commit()
+        conn.close()
+
+        logging.error(f"Traceroute failed for trace_id {trace_id}: {e}")
+
 HANDLERS = {
     'send_message': handle_send_message,
     'restart_bot': lambda params: restart_bot(),
+    'traceroute': handle_traceroute,
     # New handlers for user groups, alerts, processes, zones
     'create_user_group': lambda params: create_user_group(params),
     'send_alert': lambda params: send_alert(params),
@@ -162,6 +220,7 @@ def auto_response(message, snr, rssi, hop, pkiStatus, message_from_id, channel_n
     "motd": lambda: handle_motd(message, message_from_id, isDM),
     "mwx": lambda: handle_mwx(message_from_id, deviceID, channel_number),
     "ping": lambda: handle_ping(message_from_id, deviceID, message, hop, snr, rssi, isDM, channel_number),
+    "пинг": lambda: handle_ping(message_from_id, deviceID, message, hop, snr, rssi, isDM, channel_number),
     "pinging": lambda: handle_ping(message_from_id, deviceID, message, hop, snr, rssi, isDM, channel_number),
     "pong": lambda: "🏓PING!!🛜",
     "readnews": lambda: read_news(),
@@ -270,7 +329,7 @@ def handle_ping(message_from_id, deviceID,  message, hop, snr, rssi, isDM, chann
     else:
         msg = _("hearing_distance")
 
-    if hop == "Direct":
+    if hop == "Direct" or hop == "MQTT":
         msg = msg + f"SNR:{snr} RSSI:{rssi}"
     else:
         msg = msg + hop
@@ -1243,7 +1302,7 @@ def load_geofences_and_triggers():
         for gf in ACTIVE_GEOFENCES:
             gf_id = gf['id']
             triggers = db_handler.get_triggers()
-            active_trigs = [t for t in triggers if t.get('geofence_id') == gf_id and t.get('active', 0) == 1]
+            active_trigs = [t for t in triggers if t.get('zone_id') == gf_id and t.get('active', 0) == 1]
             for t in active_trigs:
                 t['parameters'] = json.loads(t.get('parameters', '{}'))
             ACTIVE_TRIGGERS[gf_id] = active_trigs
@@ -1423,6 +1482,17 @@ def onReceive(packet, interface):
             # Update last_seen in database
             try:
                 db_handler.update_node_last_seen(message_from_id)
+                # Broadcast node activity update
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(broadcast_map_update("node_activity", {
+                        "node_id": str(message_from_id),
+                        "last_seen": time.time(),
+                        "is_online": True
+                    }))
+                except RuntimeError:
+                    # No running event loop, skip broadcast
+                    pass
             except Exception as e:
                 logger.error(f"System: Failed to update last_seen for node {message_from_id}: {e}")
             break
@@ -1456,10 +1526,21 @@ def onReceive(packet, interface):
             timestamp = int(time.time())
             is_dm = 1 if to_id != 0 else 0
             try:
-                db_handler.save_message(from_node_id, to_node_id, channel, text, timestamp, is_dm)
+                message_id = db_handler.save_message(from_node_id, to_node_id, channel, text, timestamp, is_dm)
                 logger.debug(f"System: Saved message from {from_node_id} to {to_node_id} in channel {channel}")
             except Exception as e:
                 logger.error(f"System: Failed to save message from {from_node_id}: {e}")
+                message_id = None
+
+            # Check if message is addressed to bot's own node IDs and mark as delivered
+            if message_id is not None:
+                bot_node_ids = [globals().get(f'myNodeNum{i}') for i in range(1, 10) if globals().get(f'myNodeNum{i}') is not None]
+                if to_node_id != 'broadcast' and int(to_node_id) in bot_node_ids:
+                    try:
+                        db_handler.update_message_delivery_status(message_id, delivered=1)
+                        logger.debug(f"System: Marked message {message_id} as delivered (addressed to bot node {to_node_id})")
+                    except Exception as e:
+                        logger.error(f"System: Failed to update delivery status for message {message_id}: {e}")
 
             # check if the packet is from us
             if message_from_id in [myNodeNum1, myNodeNum2, myNodeNum3, myNodeNum4, myNodeNum5, myNodeNum6, myNodeNum7, myNodeNum8, myNodeNum9]:
@@ -1701,6 +1782,34 @@ def onReceive(packet, interface):
                     except Exception as e:
                         logger.error(f"System: Failed to update node {message_from_id} position: {e}")
                     check_and_execute_triggers(message_from_id, lat, lon)
+
+                    # Broadcast position update to WebSocket clients
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(broadcast_map_update("node_position", {
+                            "node_id": str(message_from_id),
+                            "lat": lat,
+                            "lng": lon,
+                            "altitude": altitude,
+                            "last_seen": time.time()
+                        }))
+                    except RuntimeError:
+                        # No running event loop, skip broadcast
+                        pass
+
+                    # Broadcast position update to WebSocket clients
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(broadcast_map_update("node_position", {
+                            "node_id": str(message_from_id),
+                            "lat": lat,
+                            "lng": lon,
+                            "altitude": altitude,
+                            "last_seen": time.time()
+                        }))
+                    except RuntimeError:
+                        # No running event loop, skip broadcast
+                        pass
     except KeyError as e:
         logger.critical(f"System: Error processing packet: {e} Device:{rxNode}")
         logger.debug(f"System: Error Packet = {packet}")
@@ -1972,10 +2081,10 @@ async def cleanup_task():
 
 
 async def node_status_check_task():
-    """Periodic check for offline nodes every 5 minutes."""
+    """Periodic check for offline nodes every 10 minutes."""
     while True:
         try:
-            await asyncio.sleep(300)  # 5 minutes
+            await asyncio.sleep(600)  # 10 minutes
             db_handler.check_and_update_offline_nodes()
             logging.debug("Performed periodic node status check")
         except Exception as e:
@@ -2019,7 +2128,7 @@ async def main():
     if file_monitor_enabled:
         await asyncio.gather(fileMonTask)
 
-    await asyncio.sleep(0.01)
+    await asyncio.sleep(0.1)
 
 if __name__ == "__main__":
     try:

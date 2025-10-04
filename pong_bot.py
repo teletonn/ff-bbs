@@ -92,7 +92,7 @@ def handle_ping(message_from_id, deviceID,  message, hop, snr, rssi, isDM, chann
     else:
         msg = "🔊 Can you hear me now?"
 
-    if hop == "Direct":
+    if hop == "Direct" or hop == "MQTT":
         msg = msg + f"SNR:{snr} RSSI:{rssi}"
     else:
         msg = msg + hop

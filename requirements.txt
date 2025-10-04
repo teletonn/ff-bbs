@@ -12,3 +12,9 @@ wikipedia
 googlesearch-python
 itsdangerous
 psutil
+redis
+fastapi
+uvicorn
+jinja2
+python-multipart
+websockets

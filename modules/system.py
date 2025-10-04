@@ -13,8 +13,15 @@ import uuid
 import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from webui.db_handler import save_message, update_message_delivery_status, get_undelivered_messages, update_node_telemetry, get_node_by_id
+from webui.db_handler import save_message, update_message_delivery_status, get_undelivered_messages, update_node_telemetry, get_node_by_id, mark_messages_delivered_to_node, insert_telemetry
 from modules.log import *
+
+# Import broadcast_map_update for real-time updates
+try:
+    from webui.main import broadcast_map_update
+except ImportError:
+    async def broadcast_map_update(update_type, data):
+        pass
 
 # Global Variables
 trap_list = ("cmd","cmd?") # default trap list
@@ -27,7 +34,7 @@ interface_retry_count = 3
 # Ping Configuration
 if ping_enabled:
     # ping, pinging, ack, testing, test, pong
-    trap_list_ping = ("ping", "pinging", "ack", "testing", "test", "pong", "🔔", "cq","cqcq", "cqcqcq")
+    trap_list_ping = ("ping", "пинг", "pinging", "ack", "testing", "test", "pong", "🔔", "cq","cqcq", "cqcqcq")
     trap_list = trap_list + trap_list_ping
     help_message = help_message + "ping"
 
@@ -708,6 +715,12 @@ def send_message(message, ch, nodeid=0, nodeInt=1, bypassChuncking=False, resend
 def resend_undelivered_messages(node_id, nodeInt=1):
     """Resend undelivered messages to a specific node."""
     try:
+        # Skip resending to own nodes
+        bot_node_ids = [globals().get(f'myNodeNum{i}') for i in range(1, 10) if globals().get(f'myNodeNum{i}') is not None]
+        if int(node_id) in bot_node_ids:
+            logger.debug(f"System: Skipping resend to own node {node_id}")
+            return
+
         # Check if recipient node is online and recently active before attempting resend
         node_info = get_node_by_id(str(node_id))
         if not node_info or not node_info.get('is_online', False) or (time.time() - node_info.get('last_seen', 0)) > 60:
@@ -1104,8 +1117,9 @@ def consumeMetadata(packet, rxNode=0):
                     except Exception as e:
                         logger.error(f"System: Failed to update telemetry timestamp for node {nodeID}: {e}")
 
-                    # Node is online, try to resend undelivered messages
-                    resend_undelivered_messages(nodeID, rxNode)
+                    # Node is online, try to resend undelivered messages (skip for bot's own nodes)
+                    if nodeID not in [globals().get(f'myNodeNum{i}') for i in range(1, 10) if globals().get(f'myNodeNum{i}') is not None]:
+                        resend_undelivered_messages(nodeID, rxNode)
         
         # POSITION_APP packets
         if packet_type == 'POSITION_APP':
@@ -1126,6 +1140,18 @@ def consumeMetadata(packet, rxNode=0):
                     logger.debug(f"System: Updated telemetry timestamp for position packet from node {nodeID}")
                 except Exception as e:
                     logger.error(f"System: Failed to update telemetry timestamp for position packet from node {nodeID}: {e}")
+
+                # Insert telemetry data into telemetry table
+                try:
+                    lat = position_data.get('latitude')
+                    lng = position_data.get('longitude')
+                    alt = position_data.get('altitude')
+                    ground_speed = position_data.get('groundSpeed')
+                    if lat is not None and lng is not None:
+                        insert_telemetry(str(nodeID), time.time(), lat, lng, alt, ground_speed)
+                        logger.debug(f"System: Inserted telemetry data for node {nodeID}")
+                except Exception as e:
+                    logger.error(f"System: Failed to insert telemetry data for node {nodeID}: {e}")
 
                 # if altitude is over highfly_altitude send a log and message for high-flying nodes and not in highfly_ignoreList
                 if position_data.get('altitude', 0) > highfly_altitude and highfly_enabled and str(nodeID) not in highfly_ignoreList:
@@ -1155,8 +1181,31 @@ def consumeMetadata(packet, rxNode=0):
                 else:
                     positionMetadata[nodeID]['packetCount'] = 1
 
+                # If position packet is from self, mark all undelivered messages addressed to this node as delivered
+                if nodeID == globals().get(f'myNodeNum{rxNode}'):
+                    try:
+                        marked_count = mark_messages_delivered_to_node(nodeID)
+                        if marked_count > 0:
+                            logger.debug(f"System: Marked {marked_count} undelivered messages to self node {nodeID} as delivered")
+                    except Exception as e:
+                        logger.error(f"System: Failed to mark messages as delivered for node {nodeID}: {e}")
+
             except Exception as e:
                 logger.debug(f"System: POSITION_APP decode error: {e} packet {packet}")
+
+            # Broadcast position update to WebSocket clients
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(broadcast_map_update("node_position", {
+                    "node_id": str(nodeID),
+                    "lat": lat,
+                    "lng": lng,
+                    "altitude": alt,
+                    "last_seen": time.time()
+                }))
+            except RuntimeError:
+                # No running event loop, skip broadcast
+                pass
 
         # WAYPOINT_APP packets
         if packet_type ==  'WAYPOINT_APP':

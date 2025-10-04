@@ -44,17 +44,42 @@
     </main>
 <script>
 // Register service worker for caching and offline capabilities
-if ('serviceWorker' in navigator) {
-   window.addEventListener('load', function() {
-       navigator.serviceWorker.register('/static/service-worker.js')
-           .then(function(registration) {
-               console.log('Service Worker registered successfully:', registration.scope);
-           })
-           .catch(function(error) {
-               console.log('Service Worker registration failed:', error);
-           });
-   });
+try {
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function() {
+            navigator.serviceWorker.register('/static/service-worker.js')
+                .then(function(registration) {
+                    console.log('Service Worker registered successfully:', registration.scope);
+                })
+                .catch(function(error) {
+                    console.log('Service Worker registration failed:', error);
+                });
+        });
+    } else {
+        console.log('Service Worker not supported in this browser');
+    }
+} catch (error) {
+    console.error('Error during service worker registration setup:', error);
 }
 </script>
+
+<script>
+// Global notification functions
+function showSuccess(message) {
+    console.log('Success:', message);
+    // Simple alert for now; can be enhanced with proper notifications later
+    alert('Успех: ' + message);
+}
+
+function showError(message, type = 'error') {
+    console.error('Error (' + type + '):', message);
+    // Simple alert for now; can be enhanced with proper notifications later
+    alert('Ошибка: ' + message);
+}
+
+console.log('Global functions showSuccess and showError defined');
+</script>
+
+{% block scripts %}{% endblock %}
 </body>
 </html>
