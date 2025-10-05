@@ -30,7 +30,7 @@ def where_am_i(lat=0, lon=0, short=False, zip=False):
             location = geolocator.reverse(lat + ", " + lon)
             address = location.raw['address']
             address_components = ['city', 'state', 'county', 'country']
-            whereIam = f"City: {address.get('city', '')}. State: {address.get('state', '')}. County: {address.get('county', '')}. Country: {address.get('country', '')}."
+            whereIam = f"Город: {address.get('city', '')}. Штат: {address.get('state', '')}. Округ: {address.get('county', '')}. Страна: {address.get('country', '')}."
             return whereIam
         
         if zip:
@@ -44,27 +44,27 @@ def where_am_i(lat=0, lon=0, short=False, zip=False):
             location = geolocator.reverse(str(lat) + ", " + str(lon))
             address = location.raw['address']
             address_components = {
-                'city': 'City',
-                'state': 'State',
-                'postcode': 'Zip',
-                'county': 'County',
-                'country': 'Country'
+                'city': 'Город',
+                'state': 'Штат',
+                'postcode': 'Индекс',
+                'county': 'Округ',
+                'country': 'Страна'
             }
             whereIam += ', '.join([f"{label}: {address.get(component, '')}" for component, label in address_components.items() if component in address])
         else:
             location = geolocator.reverse(lat + ", " + lon)
             address = location.raw['address']
             address_components = {
-                'house_number': 'Number',
-                'road': 'Road',
-                'city': 'City',
-                'state': 'State',
-                'postcode': 'Zip',
-                'county': 'County',
-                'country': 'Country'
+                'house_number': 'Номер',
+                'road': 'Дорога',
+                'city': 'Город',
+                'state': 'Штат',
+                'postcode': 'Индекс',
+                'county': 'Округ',
+                'country': 'Страна'
             }
             whereIam += ', '.join([f"{label}: {address.get(component, '')}" for component, label in address_components.items() if component in address])
-            whereIam += f", Grid: " + grid
+            whereIam += f", Сетка: " + grid
         return whereIam
     except Exception as e:
         logger.debug("Location:Error fetching location data with whereami, likely network error")
@@ -110,9 +110,9 @@ def getRepeaterBook(lat=0, lon=0):
                     }
                     data.append(repeater)
         else:
-            msg = "No Data for your Region"
+            msg = "Нет данных для вашего региона"
     except Exception as e:
-        msg = "No repeaters found 😔"
+        msg = "Ретрансляторы не найдены 😔"
     # Limit the output to the first 4 repeaters
     for repeater in data[:4]:
         tmpTone = repeater['tone'].replace(" /", "")
@@ -149,24 +149,24 @@ def getArtSciRepeaters(lat=0, lon=0):
             logger.error(f"Error fetching data from {artsci_url}: {e}")
 
     if repeaters != []:
-        msg = f"Found:{len(repeaters)} in {zipCode}\n"
+        msg = f"Найдено:{len(repeaters)} в {zipCode}\n"
         for repeater in repeaters:
             # format is ['City', 'Frequency', 'Offset', 'PL', 'Call', 'Notes']
             # there might be missing elements or only one element
             if len(repeater) == 2:
-                msg += f"Freq:{repeater[1]}"
+                msg += f"Частота:{repeater[1]}"
             elif len(repeater) == 3:
-                msg += f"Freq:{repeater[1]}, PL:{repeater[2]}"
+                msg += f"Частота:{repeater[1]}, PL:{repeater[2]}"
             elif len(repeater) == 4:
-                msg += f"Freq:{repeater[1]}, PL:{repeater[2]}, ID: {repeater[3]}"
+                msg += f"Частота:{repeater[1]}, PL:{repeater[2]}, ID: {repeater[3]}"
             elif len(repeater) == 5:
-                msg += f"Freq:{repeater[1]}, PL:{repeater[2]}, ID:{repeater[3]}"
+                msg += f"Частота:{repeater[1]}, PL:{repeater[2]}, ID:{repeater[3]}"
             elif len(repeater) == 6:
-                msg += f"Freq:{repeater[1]}, PL:{repeater[2]}, ID:{repeater[3]}. {repeater[5]}"
+                msg += f"Частота:{repeater[1]}, PL:{repeater[2]}, ID:{repeater[3]}. {repeater[5]}"
             if repeater != repeaters[-1]:
                 msg += "\n"
     else:
-        msg = f"no results.. sorry"
+        msg = f"нет результатов.. извините"
     return msg
 
 def get_NOAAtide(lat=0, lon=0):
@@ -185,7 +185,7 @@ def get_NOAAtide(lat=0, lon=0):
         
         if station_json['stationList'] == [] or station_json['stationList'] is None:
             logger.error("Location:No tide station found")
-            return "No tide station found with info provided"
+            return "Станция приливов не найдена с предоставленной информацией"
         
         station_id = station_json['stationList'][0]['stationId']
 
@@ -217,7 +217,7 @@ def get_NOAAtide(lat=0, lon=0):
     # format tide data into a table string for mesh
     # get the date out of the first t value 
     tide_date = tide_data[0]['t'].split(" ")[0]
-    tide_table = "Tide Data for " + tide_date + "\n"
+    tide_table = "Данные приливов на " + tide_date + "\n"
     for tide in tide_data:
         tide_time = tide['t'].split(" ")[1]
         if not zuluTime:
@@ -598,9 +598,9 @@ def getIpawsAlert(lat=0, lon=0, shortAlerts = False):
     if len(alerts) > 0:
         for alertItem in alerts[:numWxAlerts]:
             if shortAlerts:
-                alert += abbreviate_noaa(f"🚨FEMA Alert: {alertItem['headline']}")
+                alert += abbreviate_noaa(f"🚨Предупреждение FEMA: {alertItem['headline']}")
             else:
-                alert += abbreviate_noaa(f"🚨FEMA Alert: {alertItem['headline']}\n{alertItem['description']}")
+                alert += abbreviate_noaa(f"🚨Предупреждение FEMA: {alertItem['headline']}\n{alertItem['description']}")
             # add a newline if not the last alert    
             if alertItem != alerts[:numWxAlerts][-1]:
                 alert += "\n"
@@ -614,7 +614,7 @@ def get_flood_noaa(lat=0, lon=0, uid=0):
     api_url = "https://api.water.noaa.gov/nwps/v1/gauges/"
     headers = {'accept': 'application/json'}
     if uid == 0:
-        return "No flood gauge data found"
+        return "Данные датчика наводнения не найдены"
     try:
         response = requests.get(api_url + str(uid), headers=headers, timeout=urlTimeoutSeconds)
         if not response.ok:
@@ -626,7 +626,7 @@ def get_flood_noaa(lat=0, lon=0, uid=0):
     
     data = response.json()
     if not data:
-        return "No flood gauge data found"
+        return "Данные датчика наводнения не найдены"
     
     # extract values from JSON
     try:
@@ -652,9 +652,9 @@ def get_flood_noaa(lat=0, lon=0, uid=0):
     
     # format the flood data
     logger.debug(f"System: NOAA Flood data for {str(uid)}")
-    flood_data = f"Flood Data {name}:\n"
-    flood_data += f"Observed: {status_observed_primary}{status_observed_primary_unit}({status_observed_secondary}{status_observed_secondary_unit}) risk: {status_observed_floodCategory}"
-    flood_data += f"\nForecast: {status_forecast_primary}{status_forecast_primary_unit}({status_forecast_secondary}{status_forecast_secondary_unit}) risk: {status_forecast_floodCategory}"
+    flood_data = f"Данные наводнения {name}:\n"
+    flood_data += f"Наблюдаемые: {status_observed_primary}{status_observed_primary_unit}({status_observed_secondary}{status_observed_secondary_unit}) риск: {status_observed_floodCategory}"
+    flood_data += f"\nПрогноз: {status_forecast_primary}{status_forecast_primary_unit}({status_forecast_secondary}{status_forecast_secondary_unit}) риск: {status_forecast_floodCategory}"
 
     return flood_data
 
@@ -812,7 +812,7 @@ def checkUSGSEarthQuake(lat=0, lon=0):
     if quake_count == 0:
         return NO_ALERTS
     else:
-        return f"{quake_count} 🫨quakes in last {history} days within {radius} km. Largest: {largest_mag}M\n{description_text}"
+        return f"{quake_count} 🫨землетрясений за последние {history} дней в радиусе {radius} км. Самое сильное: {largest_mag}M\n{description_text}"
 
 
 howfarDB = {}
@@ -825,7 +825,7 @@ def distance(lat=0,lon=0,nodeID=0, reset=False):
     if lat == 0 and lon == 0:
         return NO_DATA_NOGPS
     if nodeID == 0:
-        return "No NodeID provided"
+        return "NodeID не предоставлен"
     
     if reset:
         if nodeID in howfarDB:
@@ -835,14 +835,14 @@ def distance(lat=0,lon=0,nodeID=0, reset=False):
         #register first point NodeID, lat, lon, time, point
         howfarDB[nodeID] = [{'lat': lat, 'lon': lon, 'time': datetime.now()}]
         if reset:
-            return "Tracking reset, new starting point registered🗺️"
+            return "Отслеживание сброшено, новая начальная точка зарегистрирована🗺️"
         else:
-            return "Starting point registered🗺️"
+            return "Начальная точка зарегистрирована🗺️"
     else:
         #de-dupe points if same as last point
         if howfarDB[nodeID][-1]['lat'] == lat and howfarDB[nodeID][-1]['lon'] == lon:
             dupe = True
-            msg = "No New GPS📍 "
+            msg = "Нет новых GPS📍 "
         # calculate distance from last point in howfarDB
         last_point = howfarDB[nodeID][-1]
         lat1 = math.radians(last_point['lat'])

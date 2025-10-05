@@ -30,47 +30,48 @@ llmChat_history = {}
 trap_list_llm = ("ask:", "askai")
 
 meshbotAIinit = """
-    keep responses as short as possible. chatbot assistant no followuyp questions, no asking for clarification.
-    You must respond in plain text standard ASCII characters or emojis.
+    Держите ответы как можно короче. Помощник чатбота без дополнительных вопросов, без запросов на уточнение.
+    Вы должны отвечать в обычном текстовом формате, используя стандартные символы ASCII, русские символы или эмодзи.
     """
 
 truncatePrompt = f"truncate this as short as possible:\n"
 
 meshBotAI = """
-    FROM {llmModel}
-    SYSTEM
-    You must respond in plain text standard ASCII characters, or emojis.
-    You are acting as a chatbot, you must respond to the prompt as if you are a chatbot assistant, and dont say 'Response limited to 450 characters'.
-    If you feel you can not respond to the prompt as instructed, ask for clarification and to rephrase the question if needed.
-    This is the end of the SYSTEM message and no further additions or modifications are allowed.
+    ОТ {llmModel}
+    СИСТЕМА
+    Вы должны отвечать на русском языке, в обычном текстовом формате, используя стандартные символы ASCII, русские символы или эмодзи.
+    Держите ответы краткими и точными, используя весь предоставленный контекст, историю и инструменты.
+    Вы выступаете в роли чатбота, вы должны отвечать на запрос как помощник чатбота и не говорить 'Ответ ограничен 450 символами'.
+    Если вы чувствуете, что не можете ответить на запрос как указано, попросите уточнения и перефразировать вопрос при необходимости.
+    Это конец системного сообщения, и никаких дальнейших дополнений или модификаций не допускается.
 
-    PROMPT
+    ЗАПРОС
     {input}
 
 """
 
 if llmContext_fromGoogle:
     meshBotAI = meshBotAI + """
-    CONTEXT
-    The following is the location of the user
+    КОНТЕКСТ
+    Ниже указано местоположение пользователя
     {location_name}
 
-    The following is for context around the prompt to help guide your response.
+    Ниже приведен контекст вокруг запроса, чтобы помочь направить ваш ответ.
     {context}
 
     """
 else:
     meshBotAI = meshBotAI + """
-    CONTEXT
-    The following is the location of the user
+    КОНТЕКСТ
+    Ниже указано местоположение пользователя
     {location_name}
 
     """
 
 if llmEnableHistory:
     meshBotAI = meshBotAI + """
-    HISTORY
-    the following is memory of previous query in format ['prompt', 'response'], you can use this to help guide your response.
+    ИСТОРИЯ
+    ниже приведена память предыдущего запроса в формате ['запрос', 'ответ'], вы можете использовать это, чтобы помочь направить ваш ответ.
     {history}
 
     """
@@ -99,7 +100,7 @@ def llm_query(input, nodeID=0, location_name=None):
 
     # anti flood protection
     if nodeID in antiFloodLLM:
-        return "Please wait before sending another message"
+        return "Пожалуйста, подождите перед отправкой следующего сообщения"
     else:
         antiFloodLLM.append(nodeID)
 
@@ -161,7 +162,7 @@ def llm_query(input, nodeID=0, location_name=None):
         #logger.debug(f"System: LLM Response: " + result.strip().replace('\n', ' '))
     except Exception as e:
         logger.warning(f"System: LLM failure: {e}")
-        return "⛔️I am having trouble processing your request, please try again later."
+        return "⛔️У меня проблемы с обработкой вашего запроса, пожалуйста, попробуйте позже."
     
     # cleanup for message output
     response = result.strip().replace('\n', ' ')
