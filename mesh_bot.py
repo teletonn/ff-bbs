@@ -1525,22 +1525,19 @@ def onReceive(packet, interface):
             text = message_string
             timestamp = int(time.time())
             is_dm = 1 if to_id != 0 else 0
+
+            # Determine if message is addressed to bot's own node IDs
+            bot_node_ids = [globals().get(f'myNodeNum{i}') for i in range(1, 10) if globals().get(f'myNodeNum{i}') is not None]
+            is_to_bot = to_node_id != 'broadcast' and int(to_node_id) in bot_node_ids
+            status = 'delivered' if is_to_bot else 'sent'
+            delivered = True if is_to_bot else False
+
             try:
-                message_id = db_handler.save_message(from_node_id, to_node_id, channel, text, timestamp, is_dm)
-                logger.debug(f"System: Saved message from {from_node_id} to {to_node_id} in channel {channel}")
+                message_id = db_handler.save_message(from_node_id, to_node_id, channel, text, timestamp, is_dm, status=status, delivered=delivered)
+                logger.debug(f"System: Saved message from {from_node_id} to {to_node_id} in channel {channel} with status {status}")
             except Exception as e:
                 logger.error(f"System: Failed to save message from {from_node_id}: {e}")
                 message_id = None
-
-            # Check if message is addressed to bot's own node IDs and mark as delivered
-            if message_id is not None:
-                bot_node_ids = [globals().get(f'myNodeNum{i}') for i in range(1, 10) if globals().get(f'myNodeNum{i}') is not None]
-                if to_node_id != 'broadcast' and int(to_node_id) in bot_node_ids:
-                    try:
-                        db_handler.update_message_delivery_status(message_id, delivered=1)
-                        logger.debug(f"System: Marked message {message_id} as delivered (addressed to bot node {to_node_id})")
-                    except Exception as e:
-                        logger.error(f"System: Failed to update delivery status for message {message_id}: {e}")
 
             # check if the packet is from us
             if message_from_id in [myNodeNum1, myNodeNum2, myNodeNum3, myNodeNum4, myNodeNum5, myNodeNum6, myNodeNum7, myNodeNum8, myNodeNum9]:
@@ -1754,6 +1751,21 @@ def onReceive(packet, interface):
                                     time.sleep(responseDelay)
                                     send_message(f"Hello {name} {qrz_hello_string}", channel_number, message_from_id, rxNode)
                                     time.sleep(responseDelay)
+        elif 'decoded' in packet and packet['decoded']['portnum'] == 'ROUTING_APP':
+            # Handle ACK packets for message delivery confirmation
+            routing = packet['decoded'].get('routing', {})
+            if routing.get('errorReason') == 'NONE':
+                # This is a successful ACK
+                request_id = routing.get('requestId')
+                if request_id:
+                    # Find the message by request_id (which should match message_id)
+                    try:
+                        message_info = db_handler.get_message_by_id(str(request_id))
+                        if message_info:
+                            db_handler.update_message_delivery_status(str(request_id), delivered=True, status='delivered')
+                            logger.info(f"System: Message {request_id} delivery confirmed via ACK")
+                    except Exception as e:
+                        logger.error(f"System: Failed to update message delivery status for ACK {request_id}: {e}")
         else:
             # Evaluate non TEXT_MESSAGE_APP packets
             consumeMetadata(packet, rxNode)
@@ -2098,6 +2110,11 @@ async def message_resend_task():
             await asyncio.sleep(30)  # 30 seconds
             all_nodes = db_handler.get_nodes()
             online_nodes = [n for n in all_nodes if n.get('is_online', 0) == 1]
+
+            # Filter out bot's own nodes to prevent self-resending
+            bot_node_ids = [globals().get(f'myNodeNum{i}') for i in range(1, 10) if globals().get(f'myNodeNum{i}') is not None]
+            online_nodes = [n for n in online_nodes if int(n['node_id']) not in bot_node_ids]
+
             if online_nodes:
                 logging.debug(f"System: Checking for undelivered messages to {len(online_nodes)} online nodes")
                 for node in online_nodes:

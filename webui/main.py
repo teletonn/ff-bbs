@@ -510,7 +510,12 @@ async def api_get_messages(
             msg["is_dm"] = bool(msg["is_dm"])
             msg["delivered"] = bool(msg["delivered"]) if msg["delivered"] is not None else None
             if msg['timestamp']:
-                dt_utc = datetime.fromtimestamp(msg['timestamp'], tz=timezone.utc)
+                if isinstance(msg['timestamp'], str):
+                    # Parse string timestamp in format '2025-10-05 10:52:26' as UTC
+                    dt_utc = datetime.strptime(msg['timestamp'], '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
+                else:
+                    # Assume numeric unix timestamp
+                    dt_utc = datetime.fromtimestamp(float(msg['timestamp']), tz=timezone.utc)
                 moscow_tz = timezone(timedelta(hours=3))
                 dt_moscow = dt_utc.astimezone(moscow_tz)
                 msg['timestamp'] = dt_moscow.strftime('%d.%m.%Y %H:%M:%S')

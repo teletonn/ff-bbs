@@ -209,13 +209,13 @@ def query_node_status(node_id):
     pass
 
 @retry_on_lock()
-def save_message(from_node_id, to_node_id, channel, text, timestamp, is_dm, delivered=False, retry_count=0, delivery_attempts=0, message_id=None):
+def save_message(from_node_id, to_node_id, channel, text, timestamp, is_dm, status='sent', delivered=False, retry_count=0, delivery_attempts=0, attempt_count=0, message_id=None):
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO messages (message_id, from_node_id, to_node_id, channel, text, timestamp, is_dm, delivered, retry_count, delivery_attempts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (message_id, from_node_id, to_node_id, channel, text, timestamp, int(is_dm), int(delivered), retry_count, delivery_attempts)
+            "INSERT INTO messages (message_id, from_node_id, to_node_id, channel, text, timestamp, is_dm, status, delivered, retry_count, delivery_attempts, attempt_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (message_id, from_node_id, to_node_id, channel, text, timestamp, int(is_dm), status, int(delivered), retry_count, delivery_attempts, attempt_count)
         )
         conn.commit()
 
@@ -1426,7 +1426,7 @@ def get_active_zones():
         conn.close()
 
 @retry_on_lock()
-def update_message_delivery_status(message_id, delivered=None, retry_count=None, delivery_attempts=None):
+def update_message_delivery_status(message_id, delivered=None, retry_count=None, delivery_attempts=None, attempt_count=None, status=None):
     """Update delivery status of a message."""
     conn = get_db_connection()
     try:
@@ -1437,6 +1437,10 @@ def update_message_delivery_status(message_id, delivered=None, retry_count=None,
             updates['retry_count'] = retry_count
         if delivery_attempts is not None:
             updates['delivery_attempts'] = delivery_attempts
+        if attempt_count is not None:
+            updates['attempt_count'] = attempt_count
+        if status is not None:
+            updates['status'] = status
 
         if updates:
             set_parts = ", ".join(f"{k} = ?" for k in updates)
@@ -1462,6 +1466,27 @@ def get_undelivered_messages(to_node_id=None, limit=50):
         else:
             cursor.execute(
                 "SELECT * FROM messages WHERE delivered = 0 AND delivery_attempts < 3 ORDER BY timestamp ASC LIMIT ?",
+                (limit,)
+            )
+        rows = cursor.fetchall()
+        columns = [description[0] for description in cursor.description]
+        return [dict(zip(columns, row)) for row in rows]
+    finally:
+        conn.close()
+
+def get_queued_messages(to_node_id=None, limit=50):
+    """Get queued messages, optionally filtered by to_node_id."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        if to_node_id:
+            cursor.execute(
+                "SELECT * FROM messages WHERE status = 'queued' AND to_node_id = ? AND delivery_attempts < 3 ORDER BY timestamp ASC LIMIT ?",
+                (to_node_id, limit)
+            )
+        else:
+            cursor.execute(
+                "SELECT * FROM messages WHERE status = 'queued' AND delivery_attempts < 3 ORDER BY timestamp ASC LIMIT ?",
                 (limit,)
             )
         rows = cursor.fetchall()
@@ -1496,6 +1521,18 @@ def insert_telemetry(node_id, timestamp, latitude, longitude, altitude, ground_s
         )
         conn.commit()
         return cursor.lastrowid
+    finally:
+        conn.close()
+
+@retry_on_lock()
+def delete_message(message_id):
+    """Delete a message by its message_id."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM messages WHERE message_id = ?", (message_id,))
+        conn.commit()
+        return cursor.rowcount > 0
     finally:
         conn.close()
 

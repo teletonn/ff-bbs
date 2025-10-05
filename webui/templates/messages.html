@@ -240,10 +240,12 @@ function loadMessages(page = 1, filter = '', filterType = 'from_id') {
         if (data.length === 0) {
           document.getElementById('no-messages').style.display = 'block';
         } else {
-          data.forEach(msg => {
+          // Prepend messages in reverse order to show newest at top
+          for (let i = data.length - 1; i >= 0; i--) {
+            const msg = data[i];
             const card = createMessageCard(msg);
-            container.appendChild(card);
-          });
+            container.insertBefore(card, container.firstChild);
+          }
           document.getElementById('messages-container').style.display = 'block';
           // Restore scroll position
           container.scrollTop = scrollTop;
@@ -355,6 +357,6 @@ function sendMessage() {
 
 loadDropdowns();
 loadMessages();
-setInterval(() => loadMessages(currentPage, currentFilter, currentFilterType), 10000);
+setInterval(() => loadMessages(currentPage, currentFilter, currentFilterType), 30000);
 </script>
 {% endblock %}

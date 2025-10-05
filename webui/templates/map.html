@@ -733,6 +733,7 @@ let allZones = [];
 let loadTimeout = null;
 let currentLoadingOperation = null;
 let keyboardShortcutsVisible = false;
+let dataUpdateInterval = null;
 
 // Enhanced UI utility functions
 function showLoading(message = 'Загрузка...', showProgress = false) {
@@ -771,7 +772,7 @@ function showError(message, type = 'error', retryCallback = null) {
    showToast(message, type === 'error' ? 'error' : type);
  }
 
-function showToast(message, type = 'info', duration = 2000) {
+function showToast(message, type = 'info', duration = 4000) {
   const container = document.getElementById('toast-container');
   const toast = document.createElement('div');
   toast.className = `toast ${type}`;
@@ -1950,6 +1951,11 @@ document.addEventListener('DOMContentLoaded', async function() {
   loadAllData();
   await populateNodeSelector();
 
+  // Periodic data updates every 30 seconds
+  dataUpdateInterval = setInterval(() => {
+    loadAllData();
+  }, 30000);
+
   // Set up filter event listeners
   document.getElementById('showRoutes').addEventListener('change', handleFilterChange);
   document.querySelectorAll('input[name="nodeFilter"]').forEach(radio => {
@@ -1987,6 +1993,9 @@ document.addEventListener('DOMContentLoaded', async function() {
     disconnectWebSocket();
     if (loadTimeout) {
       clearTimeout(loadTimeout);
+    }
+    if (dataUpdateInterval) {
+      clearInterval(dataUpdateInterval);
     }
     // Note: Modal cleanup is handled by individual modal close handlers
   });

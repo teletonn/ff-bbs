@@ -13,7 +13,7 @@ import uuid
 import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from webui.db_handler import save_message, update_message_delivery_status, get_undelivered_messages, update_node_telemetry, get_node_by_id, mark_messages_delivered_to_node, insert_telemetry
+from webui.db_handler import save_message, update_message_delivery_status, get_undelivered_messages, get_queued_messages, update_node_telemetry, get_node_by_id, mark_messages_delivered_to_node, insert_telemetry, delete_message, get_db_connection, get_message_by_id
 from modules.log import *
 
 # Import broadcast_map_update for real-time updates
@@ -449,6 +449,34 @@ def get_node_location(nodeID, nodeInt=1, channel=0):
             return position
 
 
+def is_node_online(node_id, nodeInt=1, use_ping=False):
+    """Check if a node is online based on last heard time (within 2 hours) and optionally ping."""
+    interface = globals()[f'interface{nodeInt}']
+
+    if interface.nodes:
+        for node in interface.nodes.values():
+            if node['num'] == node_id:
+                last_heard = node.get('lastHeard', 0)
+                # Check if last heard within 2 hours (7200 seconds)
+                if last_heard and (time.time() - last_heard) <= 7200:
+                    return True
+                elif use_ping:
+                    # Attempt ping if available and last heard check failed
+                    try:
+                        logger.debug(f"System: Attempting ping for node {node_id} on interface {nodeInt}")
+                        # Meshtastic interface has ping method
+                        ping_result = interface.ping(node_id, wantAck=True)
+                        if ping_result:
+                            logger.debug(f"System: Ping successful for node {node_id}")
+                            return True
+                        else:
+                            logger.debug(f"System: Ping failed for node {node_id}")
+                    except Exception as e:
+                        logger.debug(f"System: Ping not available or failed for node {node_id}: {e}")
+                break  # Found the node, no need to continue
+
+    return False
+
 def get_closest_nodes(nodeInt=1,returnCount=3):
     interface = globals()[f'interface{nodeInt}']
     node_list = []
@@ -469,11 +497,11 @@ def get_closest_nodes(nodeInt=1,returnCount=3):
 
                     # Calculate distance to node from config.ini location
                     distance = round(geopy.distance.geodesic((latitudeValue, longitudeValue), (latitude, longitude)).m, 2)
-                    
+
                     if (distance < sentry_radius):
                         if (nodeID not in [globals().get(f'myNodeNum{i}') for i in range(1, 10)]) and str(nodeID) not in sentryIgnoreList:
                             node_list.append({'id': nodeID, 'latitude': latitude, 'longitude': longitude, 'distance': distance})
-                            
+
                 except Exception as e:
                     pass
             # else:
@@ -614,37 +642,62 @@ def send_message(message, ch, nodeid=0, nodeInt=1, bypassChuncking=False, resend
         logger.warning(f"System: Attempted to send message to own node {nodeid}")
         return False
 
-    # Generate unique message ID if not resending
+    # Determine start_attempt and message_id
     if resend_existing and existing_message_id:
         message_id = existing_message_id
+        msg = get_message_by_id(message_id)
+        if msg:
+            start_attempt = msg['attempt_count']
+        else:
+            logger.error(f"System: Message {message_id} not found for resend")
+            return False
     else:
+        start_attempt = 0
         message_id = str(uuid.uuid4())
 
-        # Save message to database first
-        from_node_id = str(globals().get(f'myNodeNum{nodeInt}', 777))
-        to_node_id = str(nodeid) if nodeid != 0 else None
-        is_dm = nodeid != 0
-        timestamp = time.time()
-
-        try:
-            save_message(from_node_id, to_node_id, str(ch), message, timestamp, is_dm, message_id=message_id)
-        except Exception as e:
-            logger.error(f"System: Failed to save message to database: {e}")
-            return False
-
-    # Check if recipient node is online and recently active before attempting DM delivery
-    if nodeid != 0:
-        node_info = get_node_by_id(str(nodeid))
-        if not node_info or not node_info.get('is_online', False) or (time.time() - node_info.get('last_seen', 0)) > 60:
-            logger.warning(f"System: Recipient node {nodeid} is offline or not recently active, message saved as undelivered")
-            return False
+        # Check online status and save message
+        if nodeid != 0:
+            if not is_node_online(nodeid, nodeInt):
+                # Offline, queue the message
+                from_node_id = str(globals().get(f'myNodeNum{nodeInt}', 777))
+                to_node_id = str(nodeid)
+                is_dm = True
+                timestamp = time.time()
+                try:
+                    save_message(from_node_id, to_node_id, str(ch), message, timestamp, is_dm, status='queued', attempt_count=0, message_id=message_id)
+                    logger.info(f"System: Message queued for offline recipient {nodeid}")
+                except Exception as e:
+                    logger.error(f"System: Failed to queue message for offline recipient {nodeid}: {e}")
+                return False
+            else:
+                # Online, save as sent
+                from_node_id = str(globals().get(f'myNodeNum{nodeInt}', 777))
+                to_node_id = str(nodeid)
+                is_dm = True
+                timestamp = time.time()
+                try:
+                    save_message(from_node_id, to_node_id, str(ch), message, timestamp, is_dm, status='sent', attempt_count=1, message_id=message_id)
+                except Exception as e:
+                    logger.error(f"System: Failed to save message to database: {e}")
+                    return False
+        else:
+            # Channel message
+            from_node_id = str(globals().get(f'myNodeNum{nodeInt}', 777))
+            to_node_id = None
+            is_dm = False
+            timestamp = time.time()
+            try:
+                save_message(from_node_id, to_node_id, str(ch), message, timestamp, is_dm, status='sent', attempt_count=1, message_id=message_id)
+            except Exception as e:
+                logger.error(f"System: Failed to save message to database: {e}")
+                return False
 
     # Attempt delivery with retries
     max_attempts = 3
-    for attempt in range(max_attempts):
+    for attempt in range(start_attempt, start_attempt + max_attempts):
         try:
-            # Update delivery attempts
-            update_message_delivery_status(message_id, delivery_attempts=attempt + 1)
+            current_attempt_count = attempt + 1
+            update_message_delivery_status(message_id, attempt_count=current_attempt_count)
 
             if not bypassChuncking:
                 # Split the message into chunks if it exceeds the MESSAGE_CHUNK_SIZE
@@ -659,16 +712,12 @@ def send_message(message, ch, nodeid=0, nodeInt=1, bypassChuncking=False, resend
                 for m in message_list:
                     chunkOf = f"{message_list.index(m)+1}/{num_chunks}"
                     if nodeid == 0:
-                        # Send to channel
-                        if wantAck:
-                            logger.info(f"Device:{nodeInt} Channel:{ch} Attempt:{attempt+1} " + CustomFormatter.red + f"req.ACK " + f"Chunker{chunkOf} SendingChannel: " + CustomFormatter.white + m.replace('\n', ' '))
-                            interface.sendText(text=m, channelIndex=ch, wantAck=True)
-                        else:
-                            logger.info(f"Device:{nodeInt} Channel:{ch} Attempt:{attempt+1} " + CustomFormatter.red + f"Chunker{chunkOf} SendingChannel: " + CustomFormatter.white + m.replace('\n', ' '))
-                            interface.sendText(text=m, channelIndex=ch)
+                        # Send to channel - always use ACK for delivery confirmation
+                        logger.info(f"Device:{nodeInt} Channel:{ch} Attempt:{current_attempt_count} " + CustomFormatter.red + f"req.ACK " + f"Chunker{chunkOf} SendingChannel: " + CustomFormatter.white + m.replace('\n', ' '))
+                        interface.sendText(text=m, channelIndex=ch, wantAck=True)
                     else:
                         # Send to DM - always use ACK for delivery confirmation
-                        logger.info(f"Device:{nodeInt} Attempt:{attempt+1} " + CustomFormatter.red + f"req.ACK " + f"Chunker{chunkOf} Sending DM: " + CustomFormatter.white + m.replace('\n', ' ') + CustomFormatter.purple +\
+                        logger.info(f"Device:{nodeInt} Attempt:{current_attempt_count} " + CustomFormatter.red + f"req.ACK " + f"Chunker{chunkOf} Sending DM: " + CustomFormatter.white + m.replace('\n', ' ') + CustomFormatter.purple +\
                                   " To: " + CustomFormatter.white + f"{get_name_from_number(nodeid, 'long', nodeInt)}")
                         interface.sendText(text=m, channelIndex=ch, destinationId=nodeid, wantAck=True)
 
@@ -682,29 +731,25 @@ def send_message(message, ch, nodeid=0, nodeInt=1, bypassChuncking=False, resend
                     time.sleep(splitDelay)
             else: # message is less than MESSAGE_CHUNK_SIZE characters
                 if nodeid == 0:
-                    # Send to channel
-                    if wantAck:
-                        logger.info(f"Device:{nodeInt} Channel:{ch} Attempt:{attempt+1} " + CustomFormatter.red + "req.ACK " + "SendingChannel: " + CustomFormatter.white + message.replace('\n', ' '))
-                        interface.sendText(text=message, channelIndex=ch, wantAck=True)
-                    else:
-                        logger.info(f"Device:{nodeInt} Channel:{ch} Attempt:{attempt+1} " + CustomFormatter.red + "SendingChannel: " + CustomFormatter.white + message.replace('\n', ' '))
-                        interface.sendText(text=message, channelIndex=ch)
+                    # Send to channel - always use ACK for delivery confirmation
+                    logger.info(f"Device:{nodeInt} Channel:{ch} Attempt:{current_attempt_count} " + CustomFormatter.red + "req.ACK " + "SendingChannel: " + CustomFormatter.white + message.replace('\n', ' '))
+                    interface.sendText(text=message, channelIndex=ch, wantAck=True)
                 else:
                     # Send to DM - always use ACK for delivery confirmation
-                    logger.info(f"Device:{nodeInt} Attempt:{attempt+1} " + CustomFormatter.red + "req.ACK " + "Sending DM: " + CustomFormatter.white + message.replace('\n', ' ') + CustomFormatter.purple +\
-                                  " To: " + CustomFormatter.white + f"{get_name_from_number(nodeid, 'long', nodeInt)}")
+                    logger.info(f"Device:{nodeInt} Attempt:{current_attempt_count} " + CustomFormatter.red + "req.ACK " + "Sending DM: " + CustomFormatter.white + message.replace('\n', ' ') + CustomFormatter.purple +\
+                              " To: " + CustomFormatter.white + f"{get_name_from_number(nodeid, 'long', nodeInt)}")
                     interface.sendText(text=message, channelIndex=ch, destinationId=nodeid, wantAck=True)
 
             # If we reach here without exception, assume success
             update_message_delivery_status(message_id, delivered=True)
-            logger.info(f"System: Message {message_id} delivered successfully on attempt {attempt+1}")
+            logger.info(f"System: Message {message_id} delivered successfully on attempt {current_attempt_count}")
             return True
 
         except Exception as e:
-            logger.warning(f"System: Delivery attempt {attempt+1} failed for message {message_id}: {e}")
+            logger.warning(f"System: Delivery attempt {current_attempt_count} failed for message {message_id}: {e}")
             # Exponential backoff: 1s, 2s, 4s
-            if attempt < max_attempts - 1:
-                backoff_time = 2 ** attempt
+            if attempt < start_attempt + max_attempts - 1:
+                backoff_time = 2 ** (attempt - start_attempt)
                 logger.info(f"System: Retrying message {message_id} in {backoff_time} seconds")
                 time.sleep(backoff_time)
 
@@ -713,7 +758,7 @@ def send_message(message, ch, nodeid=0, nodeInt=1, bypassChuncking=False, resend
     return False
 
 def resend_undelivered_messages(node_id, nodeInt=1):
-    """Resend undelivered messages to a specific node."""
+    """Resend undelivered and queued messages to a specific node."""
     try:
         # Skip resending to own nodes
         bot_node_ids = [globals().get(f'myNodeNum{i}') for i in range(1, 10) if globals().get(f'myNodeNum{i}') is not None]
@@ -721,39 +766,68 @@ def resend_undelivered_messages(node_id, nodeInt=1):
             logger.debug(f"System: Skipping resend to own node {node_id}")
             return
 
-        # Check if recipient node is online and recently active before attempting resend
-        node_info = get_node_by_id(str(node_id))
-        if not node_info or not node_info.get('is_online', False) or (time.time() - node_info.get('last_seen', 0)) > 60:
-            logger.debug(f"System: Node {node_id} is offline or not recently active, skipping resend")
+        # Check if recipient node is online using improved detection (last heard within 2 hours)
+        if not is_node_online(int(node_id), nodeInt):
+            logger.debug(f"System: Node {node_id} is offline (last heard > 2 hours ago), skipping resend")
             return
 
-        undelivered = get_undelivered_messages(to_node_id=str(node_id))
-        if not undelivered:
-            logger.debug(f"System: No undelivered messages for node {node_id}")
+        # Get 'sent' messages older than 30s with attempt_count < 3
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM messages WHERE status = 'sent' AND delivered = 0 AND timestamp < ? AND attempt_count < 3 AND to_node_id = ?", (time.time() - 30, str(node_id)))
+        sent_messages = [dict(zip([column[0] for column in cursor.description], row)) for row in cursor.fetchall()]
+
+        # Get 'queued' messages with attempt_count < 9
+        cursor.execute("SELECT * FROM messages WHERE status = 'queued' AND attempt_count < 9 AND to_node_id = ?", (str(node_id),))
+        queued_messages = [dict(zip([column[0] for column in cursor.description], row)) for row in cursor.fetchall()]
+        conn.close()
+
+        all_messages = sent_messages + queued_messages
+
+        if not all_messages:
+            logger.debug(f"System: No undelivered or queued messages for node {node_id}")
             return
 
-        logger.info(f"System: Resending {len(undelivered)} undelivered messages to node {node_id}")
+        logger.info(f"System: Resending {len(all_messages)} messages (sent: {len(sent_messages)}, queued: {len(queued_messages)}) to node {node_id}")
 
-        for msg in undelivered:
-            # Check if message is not already delivered and attempts < 3
-            if not msg['delivered'] and msg['delivery_attempts'] < 3:
-                # Log message details for debugging
+        for msg in all_messages:
+            if msg['status'] == 'sent':
+                # Resend 'sent' message
                 truncated_text = msg['text'][:50] + "..." if len(msg['text']) > 50 else msg['text']
-                logger.debug(f"System: Attempting to resend message {msg['message_id']} (attempt {msg['delivery_attempts'] + 1}/3) to node {node_id}: channel={msg['channel']}, text='{truncated_text}'")
+                logger.debug(f"System: Attempting to resend sent message {msg['message_id']} (attempt {msg['attempt_count'] + 1}/3) to node {node_id}: channel={msg['channel']}, text='{truncated_text}'")
 
-                # Try to resend
                 ch = int(msg['channel']) if msg['channel'].isdigit() else 0
                 success = send_message(msg['text'], ch, int(msg['to_node_id']), nodeInt, bypassChuncking=True, resend_existing=True, existing_message_id=msg['message_id'])
                 if success:
-                    logger.info(f"System: Successfully resent message {msg['message_id']} to node {node_id} on attempt {msg['delivery_attempts'] + 1}")
+                    update_message_delivery_status(msg['message_id'], delivered=True)
+                    logger.info(f"System: Successfully resent sent message {msg['message_id']} to node {node_id}")
                 else:
-                    logger.warning(f"System: Failed to resend message {msg['message_id']} to node {node_id} on attempt {msg['delivery_attempts'] + 1}")
-                    # Increment retry count
-                    update_message_delivery_status(msg['message_id'], retry_count=msg['retry_count'] + 1)
-            else:
-                logger.debug(f"System: Skipping message {msg['message_id']} - delivered={msg['delivered']}, attempts={msg['delivery_attempts']}")
+                    # Check if attempt_count >= 3
+                    updated_msg = get_message_by_id(msg['message_id'])
+                    if updated_msg and updated_msg['attempt_count'] >= 3:
+                        update_message_delivery_status(msg['message_id'], status='queued')
+                        logger.info(f"System: Changed sent message {msg['message_id']} to queued after 3 attempts")
+
+            elif msg['status'] == 'queued':
+                # Resend 'queued' message if online
+                if is_node_online(int(msg['to_node_id']), nodeInt):
+                    truncated_text = msg['text'][:50] + "..." if len(msg['text']) > 50 else msg['text']
+                    logger.debug(f"System: Attempting to resend queued message {msg['message_id']} (attempt {msg['attempt_count'] + 1}/9) to node {node_id}: channel={msg['channel']}, text='{truncated_text}'")
+
+                    ch = int(msg['channel']) if msg['channel'].isdigit() else 0
+                    success = send_message(msg['text'], ch, int(msg['to_node_id']), nodeInt, bypassChuncking=True, resend_existing=False)
+                    if success:
+                        delete_message(msg['message_id'])
+                        logger.info(f"System: Successfully resent queued message {msg['message_id']} to node {node_id}, deleted original")
+                    else:
+                        # Increment attempt_count
+                        update_message_delivery_status(msg['message_id'], attempt_count=msg['attempt_count'] + 1)
+                        logger.warning(f"System: Failed to resend queued message {msg['message_id']} to node {node_id}, incremented attempt_count to {msg['attempt_count'] + 1}")
+                else:
+                    logger.debug(f"System: Node {node_id} still offline, skipping queued message {msg['message_id']}")
+
     except Exception as e:
-        logger.error(f"System: Error resending undelivered messages to node {node_id}: {e}")
+        logger.error(f"System: Error resending messages to node {node_id}: {e}")
 
 def get_wikipedia_summary(search_term):
     wikipedia_search = wikipedia.search(search_term, results=3)
