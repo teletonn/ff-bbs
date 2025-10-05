@@ -44,8 +44,12 @@ def init_db():
         text TEXT,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         is_dm BOOLEAN,
-        status TEXT DEFAULT 'sent' CHECK (status IN ('sent', 'queued', 'delivered', 'failed')),
-        attempt_count INTEGER DEFAULT 0
+        status TEXT DEFAULT 'sent' CHECK (status IN ('sent', 'queued', 'delivered', 'undelivered')),
+        attempt_count INTEGER DEFAULT 0,
+        last_attempt_time TIMESTAMP,
+        next_retry_time TIMESTAMP,
+        error_message TEXT,
+        defer_count INTEGER DEFAULT 0
     )
     ''')
 
@@ -339,11 +343,15 @@ def init_db():
     message_columns = [col[1] for col in cursor.fetchall()]
 
     delivery_columns = {
-        'status': "TEXT DEFAULT 'sent' CHECK (status IN ('sent', 'queued', 'delivered', 'failed'))",
+        'status': "TEXT DEFAULT 'sent' CHECK (status IN ('sent', 'queued', 'delivered', 'undelivered'))",
         'delivered': 'BOOLEAN DEFAULT 0',
         'retry_count': 'INTEGER DEFAULT 0',
         'delivery_attempts': 'INTEGER DEFAULT 0',
-        'attempt_count': 'INTEGER DEFAULT 0'
+        'attempt_count': 'INTEGER DEFAULT 0',
+        'last_attempt_time': 'TIMESTAMP',
+        'next_retry_time': 'TIMESTAMP',
+        'error_message': 'TEXT',
+        'defer_count': 'INTEGER DEFAULT 0'
     }
 
     for col_name, col_type in delivery_columns.items():

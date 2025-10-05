@@ -1763,6 +1763,9 @@ def onReceive(packet, interface):
                         message_info = db_handler.get_message_by_id(str(request_id))
                         if message_info:
                             db_handler.update_message_delivery_status(str(request_id), delivered=True, status='delivered')
+                            # Update node info on packet reception
+                            packet_data = {'snr': packet.get('rxSnr'), 'rssi': packet.get('rxRssi'), 'last_telemetry': time.time()}
+                            db_handler.update_node_on_packet(message_from_id, packet_data)
                             logger.info(f"System: Message {request_id} delivery confirmed via ACK")
                     except Exception as e:
                         logger.error(f"System: Failed to update message delivery status for ACK {request_id}: {e}")

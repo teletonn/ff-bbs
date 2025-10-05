@@ -425,6 +425,10 @@ def onReceive(packet, interface):
         else:
             # Evaluate non TEXT_MESSAGE_APP packets
             consumeMetadata(packet, rxNode)
+            # Update node info on packet reception
+            from webui import db_handler
+            packet_data = {'snr': packet.get('rxSnr'), 'rssi': packet.get('rxRssi'), 'last_telemetry': time.time()}
+            db_handler.update_node_on_packet(message_from_id, packet_data)
     except KeyError as e:
         logger.critical(f"System: Error processing packet: {e} Device:{rxNode}")
         logger.debug(f"System: Error Packet = {packet}")

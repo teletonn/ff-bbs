@@ -1426,7 +1426,7 @@ def get_active_zones():
         conn.close()
 
 @retry_on_lock()
-def update_message_delivery_status(message_id, delivered=None, retry_count=None, delivery_attempts=None, attempt_count=None, status=None):
+def update_message_delivery_status(message_id, delivered=None, retry_count=None, delivery_attempts=None, attempt_count=None, status=None, last_attempt_time=None, next_retry_time=None, error_message=None, defer_count=None):
     """Update delivery status of a message."""
     conn = get_db_connection()
     try:
@@ -1441,6 +1441,14 @@ def update_message_delivery_status(message_id, delivered=None, retry_count=None,
             updates['attempt_count'] = attempt_count
         if status is not None:
             updates['status'] = status
+        if last_attempt_time is not None:
+            updates['last_attempt_time'] = last_attempt_time
+        if next_retry_time is not None:
+            updates['next_retry_time'] = next_retry_time
+        if error_message is not None:
+            updates['error_message'] = error_message
+        if defer_count is not None:
+            updates['defer_count'] = defer_count
 
         if updates:
             set_parts = ", ".join(f"{k} = ?" for k in updates)
@@ -1542,8 +1550,90 @@ def mark_messages_delivered_to_node(node_id):
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
-        cursor.execute("UPDATE messages SET delivered = 1 WHERE to_node_id = ? AND delivered = 0", (str(node_id),))
+        cursor.execute("UPDATE messages SET delivered = 1, status = 'delivered' WHERE to_node_id = ? AND delivered = 0", (str(node_id),))
         conn.commit()
         return cursor.rowcount
+    finally:
+        conn.close()
+
+@retry_on_lock()
+def update_message_status(message_id, status, error_message=None):
+    """Update the status of a specific message."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        if error_message is not None:
+            cursor.execute("UPDATE messages SET status = ?, error_message = ? WHERE message_id = ?", (status, error_message, message_id))
+        else:
+            cursor.execute("UPDATE messages SET status = ? WHERE message_id = ?", (status, message_id))
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+@retry_on_lock()
+def retry_message(message_id):
+    """Reset message for retry by setting status to 'queued' and resetting attempt counters."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE messages
+            SET status = 'queued', attempt_count = 0, defer_count = 0,
+                last_attempt_time = NULL, next_retry_time = NULL, error_message = NULL
+            WHERE message_id = ?
+        """, (message_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+@retry_on_lock()
+def delete_message_by_user(message_id, user_id):
+    """Delete a message if it belongs to the specified user."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        # First check if the message belongs to the user (by checking if from_node_id matches user's node_id)
+        cursor.execute("""
+            SELECT m.id FROM messages m
+            JOIN users u ON m.from_node_id = u.node_id
+            WHERE m.message_id = ? AND u.id = ?
+        """, (message_id, user_id))
+        if cursor.fetchone():
+            cursor.execute("DELETE FROM messages WHERE message_id = ?", (message_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+        return False
+    finally:
+        conn.close()
+
+@retry_on_lock()
+def update_node_on_packet(node_id, packet_data):
+    """Update node information based on received packet data."""
+    conn = get_db_connection()
+    try:
+        updates = {}
+        if 'snr' in packet_data:
+            updates['snr'] = packet_data['snr']
+        if 'rssi' in packet_data:
+            updates['rssi'] = packet_data['rssi']
+        if 'hop_count' in packet_data:
+            updates['hop_count'] = packet_data['hop_count']
+        if 'battery_level' in packet_data:
+            updates['battery_level'] = packet_data['battery_level']
+        if 'latitude' in packet_data:
+            updates['latitude'] = packet_data['latitude']
+        if 'longitude' in packet_data:
+            updates['longitude'] = packet_data['longitude']
+        if 'altitude' in packet_data:
+            updates['altitude'] = packet_data['altitude']
+        if 'last_telemetry' in packet_data:
+            updates['last_telemetry'] = packet_data['last_telemetry']
+
+        if updates:
+            update_node(node_id, **updates)
+            logger.debug(f"Updated node {node_id} with packet data: {updates}")
+        return True
     finally:
         conn.close()

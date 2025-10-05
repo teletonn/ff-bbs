@@ -668,6 +668,12 @@ button:disabled, .btn:disabled {
     border: 1px solid rgba(158, 158, 158, 0.3);
 }
 
+.status-undelivered {
+    background: rgba(244, 67, 54, 0.2);
+    color: #F44336;
+    border: 1px solid rgba(244, 67, 54, 0.3);
+}
+
 .expand-icon {
     color: var(--accent-color);
     font-size: 1.2em;
@@ -702,6 +708,13 @@ button:disabled, .btn:disabled {
 
 .detail-row:last-child {
     margin-bottom: 0;
+}
+
+.message-actions {
+    margin-top: 15px;
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
 }
 
 /* Messages Container */

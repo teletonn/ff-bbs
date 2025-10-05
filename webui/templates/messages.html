@@ -132,25 +132,31 @@ function createMessageCard(msg) {
     const card = document.createElement('div');
     card.className = 'message-card';
 
-    // Determine status
+    // Determine status based on status field
     let statusText = 'Неизвестно';
     let statusClass = 'status-unknown';
-    if (msg.delivered === true) {
+    const status = msg.status;
+    if (status === 'delivered') {
         statusText = 'Доставлено';
         statusClass = 'status-delivered';
-    } else if (msg.delivered === false) {
-        if (msg.retry_count > 0) {
-            statusText = `Повтор (${msg.retry_count})`;
-            statusClass = 'status-retrying';
-        } else {
-            statusText = 'Ожидает';
-            statusClass = 'status-pending';
-        }
+    } else if (status === 'queued') {
+        statusText = 'Ожидает';
+        statusClass = 'status-pending';
+    } else if (status === 'undelivered') {
+        statusText = 'Не доставлено';
+        statusClass = 'status-undelivered';
+    } else if (status === 'sent') {
+        statusText = 'Отправлено';
+        statusClass = 'status-pending';
     }
 
     // Format display names
     const fromDisplay = msg.from_name || msg.from_id || 'Неизвестно';
     const toDisplay = msg.to_name || msg.to_id || 'Неизвестно';
+
+    // Determine if retry button should be enabled
+    const canRetry = status === 'queued' || status === 'undelivered';
+    const retryButtonDisabled = canRetry ? '' : 'disabled';
 
     card.innerHTML = `
         <div class="message-header" onclick="toggleMessageCard(this)">
@@ -185,10 +191,14 @@ function createMessageCard(msg) {
                 <strong>Статус доставки:</strong> ${statusText}
             </div>
             <div class="detail-row">
-                <strong>Попыток доставки:</strong> ${msg.delivery_attempts || 0}
+                <strong>Попыток доставки:</strong> ${msg.attempt_count || 0}
             </div>
             <div class="detail-row">
-                <strong>Количество повторов:</strong> ${msg.retry_count || 0}
+                <strong>Количество повторов:</strong> ${msg.defer_count || 0}
+            </div>
+            <div class="message-actions">
+                <button onclick="retryMessage(${msg.id})" ${retryButtonDisabled}>Повторить отправку</button>
+                <button onclick="deleteMessage(${msg.id})">Удалить</button>
             </div>
         </div>
     `;
@@ -310,49 +320,109 @@ window.onclick = function(event) {
 }
 
 function sendMessage() {
-   const recipient = document.getElementById('recipient-select').value;
-   const message = document.getElementById('message-input').value.trim();
+    const recipient = document.getElementById('recipient-select').value;
+    const message = document.getElementById('message-input').value.trim();
 
-   if (!recipient || !message) {
-     alert('Пожалуйста, заполните все поля.');
-     return;
-   }
+    if (!recipient || !message) {
+      alert('Пожалуйста, заполните все поля.');
+      return;
+    }
 
-   if (message.length > 500) {
-     alert('Сообщение должно быть не более 500 символов.');
-     return;
-   }
+    if (message.length > 500) {
+      alert('Сообщение должно быть не более 500 символов.');
+      return;
+    }
 
-   const isChannel = channels.includes(recipient);
-   const mode = isChannel ? 'channel' : 'dm';
+    const isChannel = channels.includes(recipient);
+    const mode = isChannel ? 'channel' : 'dm';
 
-   fetch('/api/v1/messages/send', {
-     method: 'POST',
-     headers: {
-       'Content-Type': 'application/json',
-     },
-     body: JSON.stringify({ mode: mode, recipient: recipient, message: message }),
-     credentials: 'same-origin'
-   })
-   .then(response => {
-     if (!response.ok) {
-       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-     }
-     return response.json();
-   })
-   .then(data => {
-     if (data.success) {
-       showSuccessModal(`ID команды: ${data.command_id}`);
-       document.getElementById('message-input').value = '';
-       loadMessages(currentPage, currentFilter, currentFilterType);
-     } else {
-       alert(`Ошибка: ${data.error || 'Неизвестная ошибка'}`);
-     }
-   })
-   .catch(error => {
-     console.error('Ошибка отправки сообщения:', error);
-     alert(`Ошибка отправки сообщения: ${error.message}`);
-   });
+    fetch('/api/v1/messages/send', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ mode: mode, recipient: recipient, message: message }),
+      credentials: 'same-origin'
+    })
+    .then(response => {
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      return response.json();
+    })
+    .then(data => {
+      if (data.success) {
+        showSuccessModal(`ID команды: ${data.command_id}`);
+        document.getElementById('message-input').value = '';
+        loadMessages(currentPage, currentFilter, currentFilterType);
+      } else {
+        alert(`Ошибка: ${data.error || 'Неизвестная ошибка'}`);
+      }
+    })
+    .catch(error => {
+      console.error('Ошибка отправки сообщения:', error);
+      alert(`Ошибка отправки сообщения: ${error.message}`);
+    });
+}
+
+function retryMessage(messageId) {
+    fetch(`/api/v1/messages/${messageId}/retry`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        credentials: 'same-origin'
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        return response.json();
+    })
+    .then(data => {
+        if (data.success) {
+            showSuccessModal('Сообщение поставлено в очередь на повторную отправку');
+            loadMessages(currentPage, currentFilter, currentFilterType);
+        } else {
+            alert(`Ошибка: ${data.error || 'Неизвестная ошибка'}`);
+        }
+    })
+    .catch(error => {
+        console.error('Ошибка повторной отправки сообщения:', error);
+        alert(`Ошибка повторной отправки сообщения: ${error.message}`);
+    });
+}
+
+function deleteMessage(messageId) {
+    if (!confirm('Вы уверены, что хотите удалить это сообщение?')) {
+        return;
+    }
+
+    fetch(`/api/v1/messages/${messageId}`, {
+        method: 'DELETE',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        credentials: 'same-origin'
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        return response.json();
+    })
+    .then(data => {
+        if (data.success) {
+            showSuccessModal('Сообщение удалено');
+            loadMessages(currentPage, currentFilter, currentFilterType);
+        } else {
+            alert(`Ошибка: ${data.error || 'Неизвестная ошибка'}`);
+        }
+    })
+    .catch(error => {
+        console.error('Ошибка удаления сообщения:', error);
+        alert(`Ошибка удаления сообщения: ${error.message}`);
+    });
 }
 
 loadDropdowns();

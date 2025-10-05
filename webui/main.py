@@ -27,7 +27,8 @@ from .db_handler import (
     get_alerts, get_alert, create_alert, update_alert_status, delete_alert,
     get_alert_configs, get_alert_config, create_alert_config, update_alert_config, delete_alert_config,
     get_processes, get_process, create_process, update_process, delete_process, update_process_run_count,
-    get_zones, get_zone, create_zone, update_zone, delete_zone, get_active_zones
+    get_zones, get_zone, create_zone, update_zone, delete_zone, get_active_zones,
+    update_message_status, retry_message, delete_message_by_user, update_node_on_packet
 )
 import sqlite3
 import json
@@ -477,8 +478,8 @@ async def api_get_messages(
     conn = get_db_connection()
     try:
         base_query = """
-            SELECT m.from_node_id as from_id, m.to_node_id as to_id, m.channel, m.text, m.timestamp, m.is_dm,
-                   m.delivered, m.retry_count, m.delivery_attempts,
+            SELECT m.id, m.message_id, m.from_node_id as from_id, m.to_node_id as to_id, m.channel, m.text, m.timestamp, m.is_dm,
+                   m.status, m.attempt_count, m.last_attempt_time, m.next_retry_time, m.error_message, m.defer_count,
                    fn.name as from_name, tn.name as to_name
             FROM messages m
             LEFT JOIN nodes fn ON m.from_node_id = fn.node_id
@@ -504,11 +505,10 @@ async def api_get_messages(
         cursor = conn.cursor()
         cursor.execute(base_query, params)
         rows = cursor.fetchall()
-        keys = ['from_id', 'to_id', 'channel', 'text', 'timestamp', 'is_dm', 'delivered', 'retry_count', 'delivery_attempts', 'from_name', 'to_name']
+        keys = ['id', 'message_id', 'from_id', 'to_id', 'channel', 'text', 'timestamp', 'is_dm', 'status', 'attempt_count', 'last_attempt_time', 'next_retry_time', 'error_message', 'defer_count', 'from_name', 'to_name']
         messages = [dict(zip(keys, row)) for row in rows]
         for msg in messages:
             msg["is_dm"] = bool(msg["is_dm"])
-            msg["delivered"] = bool(msg["delivered"]) if msg["delivered"] is not None else None
             if msg['timestamp']:
                 if isinstance(msg['timestamp'], str):
                     # Parse string timestamp in format '2025-10-05 10:52:26' as UTC
@@ -525,6 +525,30 @@ async def api_get_messages(
         return []
     finally:
         conn.close()
+
+@app.post("/api/v1/messages/{message_id}/retry", dependencies=[Depends(login_required)])
+async def api_retry_message(message_id: str, current_user: dict = Depends(get_current_user)):
+    """Retry sending a message."""
+    try:
+        success = retry_message(message_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Message not found or retry failed")
+        return {"success": True, "message": "Message queued for retry"}
+    except Exception as e:
+        print(f"Error retrying message {message_id}: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.delete("/api/v1/messages/{message_id}", dependencies=[Depends(login_required)])
+async def api_delete_message(message_id: str, current_user: dict = Depends(get_current_user)):
+    """Delete a message by the user who sent it."""
+    try:
+        success = delete_message_by_user(message_id, current_user['id'])
+        if not success:
+            raise HTTPException(status_code=404, detail="Message not found or access denied")
+        return {"success": True, "message": "Message deleted"}
+    except Exception as e:
+        print(f"Error deleting message {message_id}: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get("/api/v1/forum/topics")
 async def api_get_topics():

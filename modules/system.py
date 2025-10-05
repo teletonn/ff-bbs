@@ -13,7 +13,7 @@ import uuid
 import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from webui.db_handler import save_message, update_message_delivery_status, get_undelivered_messages, get_queued_messages, update_node_telemetry, get_node_by_id, mark_messages_delivered_to_node, insert_telemetry, delete_message, get_db_connection, get_message_by_id
+from webui.db_handler import save_message, update_message_delivery_status, get_undelivered_messages, get_queued_messages, update_node_telemetry, get_node_by_id, mark_messages_delivered_to_node, insert_telemetry, delete_message, get_db_connection, get_message_by_id, update_message_status, retry_message, delete_message_by_user, update_node_on_packet
 from modules.log import *
 
 # Import broadcast_map_update for real-time updates
@@ -692,12 +692,14 @@ def send_message(message, ch, nodeid=0, nodeInt=1, bypassChuncking=False, resend
                 logger.error(f"System: Failed to save message to database: {e}")
                 return False
 
-    # Attempt delivery with retries
-    max_attempts = 3
-    for attempt in range(start_attempt, start_attempt + max_attempts):
+    # Attempt delivery with refined retry logic: 3 attempts then defer, total 9 then undelivered
+    max_direct_attempts = 3
+    max_total_attempts = 9
+
+    for attempt in range(start_attempt, max_total_attempts):
         try:
             current_attempt_count = attempt + 1
-            update_message_delivery_status(message_id, attempt_count=current_attempt_count)
+            update_message_delivery_status(message_id, attempt_count=current_attempt_count, last_attempt_time=time.time())
 
             if not bypassChuncking:
                 # Split the message into chunks if it exceeds the MESSAGE_CHUNK_SIZE
@@ -741,20 +743,38 @@ def send_message(message, ch, nodeid=0, nodeInt=1, bypassChuncking=False, resend
                     interface.sendText(text=message, channelIndex=ch, destinationId=nodeid, wantAck=True)
 
             # If we reach here without exception, assume success
-            update_message_delivery_status(message_id, delivered=True)
+            update_message_delivery_status(message_id, delivered=True, status='delivered')
             logger.info(f"System: Message {message_id} delivered successfully on attempt {current_attempt_count}")
             return True
 
         except Exception as e:
-            logger.warning(f"System: Delivery attempt {current_attempt_count} failed for message {message_id}: {e}")
-            # Exponential backoff: 1s, 2s, 4s
-            if attempt < start_attempt + max_attempts - 1:
-                backoff_time = 2 ** (attempt - start_attempt)
-                logger.info(f"System: Retrying message {message_id} in {backoff_time} seconds")
-                time.sleep(backoff_time)
+            error_msg = str(e)
+            logger.warning(f"System: Delivery attempt {current_attempt_count} failed for message {message_id}: {error_msg}")
 
-    # All attempts failed
-    logger.error(f"System: Message {message_id} failed delivery after {max_attempts} attempts")
+            # After 3 direct attempts, defer the message
+            if current_attempt_count >= start_attempt + max_direct_attempts and current_attempt_count < max_total_attempts:
+                # Defer: set status to 'queued', increment defer_count, set next_retry_time
+                defer_count = (current_attempt_count // max_direct_attempts)
+                next_retry_time = time.time() + (60 * defer_count)  # Exponential defer: 1min, 2min, 3min, etc.
+                update_message_delivery_status(message_id, status='queued', defer_count=defer_count,
+                                            next_retry_time=next_retry_time, error_message=error_msg)
+                logger.info(f"System: Message {message_id} deferred after {current_attempt_count} attempts, next retry at {time.ctime(next_retry_time)}")
+                return False
+            elif current_attempt_count >= max_total_attempts:
+                # All attempts exhausted, mark as undelivered
+                update_message_delivery_status(message_id, status='undelivered', error_message=error_msg)
+                logger.error(f"System: Message {message_id} undelivered after {max_total_attempts} total attempts")
+                return False
+            else:
+                # Still in direct retry phase, use exponential backoff
+                if attempt < max_total_attempts - 1:
+                    backoff_time = 2 ** attempt  # 1s, 2s, 4s
+                    logger.info(f"System: Retrying message {message_id} in {backoff_time} seconds")
+                    time.sleep(backoff_time)
+
+    # Should not reach here, but just in case
+    update_message_delivery_status(message_id, status='undelivered', error_message="Max attempts reached")
+    logger.error(f"System: Message {message_id} undelivered after reaching max attempts")
     return False
 
 def resend_undelivered_messages(node_id, nodeInt=1):
@@ -777,8 +797,8 @@ def resend_undelivered_messages(node_id, nodeInt=1):
         cursor.execute("SELECT * FROM messages WHERE status = 'sent' AND delivered = 0 AND timestamp < ? AND attempt_count < 3 AND to_node_id = ?", (time.time() - 30, str(node_id)))
         sent_messages = [dict(zip([column[0] for column in cursor.description], row)) for row in cursor.fetchall()]
 
-        # Get 'queued' messages with attempt_count < 9
-        cursor.execute("SELECT * FROM messages WHERE status = 'queued' AND attempt_count < 9 AND to_node_id = ?", (str(node_id),))
+        # Get 'queued' messages with attempt_count < 9 and next_retry_time <= current time
+        cursor.execute("SELECT * FROM messages WHERE status = 'queued' AND attempt_count < 9 AND to_node_id = ? AND (next_retry_time IS NULL OR next_retry_time <= ?)", (str(node_id), time.time()))
         queued_messages = [dict(zip([column[0] for column in cursor.description], row)) for row in cursor.fetchall()]
         conn.close()
 
@@ -815,7 +835,7 @@ def resend_undelivered_messages(node_id, nodeInt=1):
                     logger.debug(f"System: Attempting to resend queued message {msg['message_id']} (attempt {msg['attempt_count'] + 1}/9) to node {node_id}: channel={msg['channel']}, text='{truncated_text}'")
 
                     ch = int(msg['channel']) if msg['channel'].isdigit() else 0
-                    success = send_message(msg['text'], ch, int(msg['to_node_id']), nodeInt, bypassChuncking=True, resend_existing=False)
+                    success = send_message(msg['text'], ch, int(msg['to_node_id']), nodeInt, bypassChuncking=True, resend_existing=True, existing_message_id=msg['message_id'])
                     if success:
                         delete_message(msg['message_id'])
                         logger.info(f"System: Successfully resent queued message {msg['message_id']} to node {node_id}, deleted original")
@@ -1187,6 +1207,9 @@ def consumeMetadata(packet, rxNode=0):
                     # Update database with telemetry timestamp and online status
                     try:
                         update_node_telemetry(nodeID, {'last_telemetry': time.time()})
+                        # Update node with packet data
+                        packet_data = {'snr': packet.get('rxSnr'), 'rssi': packet.get('rxRssi'), 'hop_count': hop_count, 'last_telemetry': time.time()}
+                        update_node_on_packet(nodeID, packet_data)
                         logger.debug(f"System: Updated telemetry timestamp for node {nodeID}")
                     except Exception as e:
                         logger.error(f"System: Failed to update telemetry timestamp for node {nodeID}: {e}")
@@ -1211,6 +1234,15 @@ def consumeMetadata(packet, rxNode=0):
                 # Update database with telemetry timestamp for position packets
                 try:
                     update_node_telemetry(nodeID, {'last_telemetry': time.time()})
+                    # Update node with position packet data
+                    packet_data = {
+                        'latitude': position_data.get('latitude'),
+                        'longitude': position_data.get('longitude'),
+                        'altitude': position_data.get('altitude'),
+                        'ground_speed': position_data.get('groundSpeed'),
+                        'last_telemetry': time.time()
+                    }
+                    update_node_on_packet(nodeID, packet_data)
                     logger.debug(f"System: Updated telemetry timestamp for position packet from node {nodeID}")
                 except Exception as e:
                     logger.error(f"System: Failed to update telemetry timestamp for position packet from node {nodeID}: {e}")
