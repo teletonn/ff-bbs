@@ -5,10 +5,10 @@
 # mac is the MAC address of the device to connect to for ble type
 
 [interface]
-type = serial
-port = /dev/ttyACM0
+type = tcp
+# port = /dev/ttyACM0
 # port = /dev/ttyUSB0
-# hostname = meshtastic.local
+hostname = 192.168.1.245
 # mac = 00:11:22:33:44:55
 
 # Additional interface for multi radio support
@@ -29,7 +29,7 @@ respond_by_dm_only = True
 # Allows auto-ping feature in a channel, False forces to 1 ping only
 autoPingInChannel = False
 # defaultChannel is the meshtastic default public channel, e.g. LongFast (if none use -1)
-defaultChannel = 0
+defaultChannel = 3
 # ignoreDefaultChannel, the bot will ignore the default channel set above
 ignoreDefaultChannel = False
 # ignoreChannels is a comma separated list of channels to ignore, e.g. 4,5
@@ -37,19 +37,18 @@ ignoreChannels =
 # require ! to be the first character in a command
 cmdBang = False
 # require explicit command, the message will only be processed if it starts with a command word
-explicitCmd = True
+explicitCmd = False
 # list of favorite nodes numbers ex: 2813308004,4258675309 used by script/addFav.py
 favoriteNodeList = 
 
-# motd is reset to this value on boot
-motd = Thanks for using MeshBOT! Have a good day!
-welcome_message = MeshBot, here for you like a friend who is not. Try sending: ping @foo or, cmd
+motd = Зажигай свой огонек - будь на связи, Светлячок! Напиши мне ЛС и я помогу!
+welcome_message = Зажигай свой огонек - будь на связи, Светлячок! Напиши мне ЛС и я помогу! Например: ping @mesh
 
 # whoami
 whoami = True
 
 # enable or disable the Joke module
-DadJokes = True
+DadJokes = False
 DadJokesEmoji = False
 
 # enable or disable the Solar module
@@ -59,20 +58,20 @@ spaceWeather = True
 wikipedia = True
 
 # Enable ollama LLM see more at https://ollama.com
-ollama = False
+ollama = True
 # Ollama model to use (defaults to gemma3:270m)
-# ollamaModel = gemma3:latest
+ollamaModel = gemma3:1b
 # server instance to use (defaults to local machine install)
 ollamaHostName = http://localhost:11434
 # Produce LLM replies to messages that aren't commands?
 # If False, the LLM only replies to the "ask:" and "askai" commands.
-llmReplyToNonCommands = True
+llmReplyToNonCommands = False
 # if True, the input is sent raw to the LLM, if False uses legacy template query
 rawLLMQuery = True 
 
 # StoreForward Enabled and Limits
 StoreForward = True
-StoreLimit = 3
+StoreLimit = 100
 
 # history command 
 enableCmdHistory = True
@@ -80,12 +79,12 @@ enableCmdHistory = True
 lheardCmdIgnoreNodes =
 
 # 24 hour clock
-zuluTime = False
+zuluTime = True
 # wait time for URL requests
 urlTimeout = 10
 
 # logging to file of the non Bot messages
-LogMessagesToFile = False
+LogMessagesToFile = True
 # Logging of system messages to file
 SyslogToFile = True
 # logging level for the bot (DEBUG, INFO, WARNING, ERROR, CRITICAL)
@@ -103,14 +102,14 @@ echoChannel = 9
 
 [emergencyHandler]
 # enable or disable the emergency response handler
-enabled = False
+enabled = True
 # channel to send a message to when the emergency handler is triggered
-alert_channel = 2
+alert_channel = 1
 alert_interface = 1
 
 [sentry]
 # detect anyone close to the bot
-SentryEnabled = True
+SentryEnabled = False
 emailSentryAlerts = False
 # radius in meters to detect someone close to the bot
 SentryRadius = 100
@@ -123,7 +122,7 @@ SentryHoldoff = 9
 sentryIgnoreList =
 
 # HighFlying Node alert
-highFlyingAlert = True
+highFlyingAlert = False
 # Altitude in meters to trigger the alert
 highFlyingAlertAltitude = 2000
 # check with OpenSkyNetwork if highfly detected for aircraft
@@ -141,18 +140,18 @@ bbs_ban_list =
 # list of admin nodes numbers ex: 2813308004,4258675309
 bbs_admin_list = 
 # enable bbs synchronization with other nodes
-bbslink_enabled = False
+bbslink_enabled = True
 # list of whitelisted nodes numbers ex: 2813308004,4258675309 empty list allows all
 bbslink_whitelist = 
 
 # location module
 [location]
 enabled = True
-lat = 48.50
-lon = -123.0
+lat = 45.100001
+lon = 38.100001
 
 # Default to metric units rather than imperial
-useMetric = False
+useMetric = True
 
 # repeaterList lookup location (rbook / artsci)
 repeaterLookup = rbook
@@ -163,7 +162,7 @@ NOAAforecastDuration = 3
 NOAAalertCount = 2
 
 # use Open-Meteo API for weather data not NOAA useful for non US locations
-UseMeteoWxAPI = False
+UseMeteoWxAPI = True
 
 # NOAA Coastal Data Enable NOAA Coastal Waters Forecasts and Tide
 coastalEnabled = False
@@ -221,7 +220,7 @@ satList = 25544,7530
 
 # CheckList Checkin/Checkout
 [checklist]
-enabled = False
+enabled = True
 checklist_db = data/checklist.db
 reverse_in_out = False
 
@@ -240,7 +239,7 @@ enabled = False
 # and rebroadcasted on the same channel on the other device/node/interface
 # with great power comes great responsibility, danger could be lurking in use of this feature
 # if you have the two nodes on the same radio configurations, you could create a feedback loop
-repeater_channels =
+repeater_channels = 1
 
 [scheduler]
 # enable or disable the scheduler module
@@ -248,7 +247,7 @@ enabled = False
 # interface to send the message to
 interface = 1
 # channel to send the message to
-channel = 2
+channel = 1
 message = "MeshBot says Hello! DM for more info."
 # value can be min,hour,day,mon,tue,wed,thu,fri,sat,sun
 value =
@@ -312,36 +311,39 @@ IMAP_FOLDER = inbox
 # if hop limit for the user exceeds this value, the message will be dropped
 game_hop_limit = 5
 # enable or disable the games module(s)
-dopeWars = True
-lemonade = True
-blackjack = True
-videopoker = True
-mastermind = True
-golfsim = True
-hangman = True
-hamtest = True
+dopeWars = False
+lemonade = False
+blackjack = False
+videopoker = False
+mastermind = False
+golfsim = False
+hangman = False
+hamtest = False
 
 [messagingSettings]
 # delay in seconds for response to avoid message collision /throttling
 responseDelay = 2.2
 # delay in seconds for splits in messages to avoid message collision /throttling
-splitDelay = 2.5
+splitDelay = 8.5
 # message chunk size for sending at high success rate, chunkr allows exceeding by 3 characters
-MESSAGE_CHUNK_SIZE = 160
+MESSAGE_CHUNK_SIZE = 140
 # Request Acknowledgement of message OTA
-wantAck = False
+wantAck = True
 # Max limit buffer for radio testing
 maxBuffer = 200
 #Enable Extra logging of Hop count data
-enableHopLogs = False
+enableHopLogs = True
 # Noisy Node Telemetry Logging and packet threshold
-noisyNodeLogging = False
+noisyNodeLogging = True
 noisyTelemetryLimit = 5
 # Enable detailed packet logging
 debugMetadata = False
 DEBUGpacket = False
 
+[commands]
+allowed_types = send_message,update_node,run_script,restart_bot
+poll_interval = 5
+
 [localization]
 # Language for the bot's responses (en, ru)
-language = en
-
+language = ru
