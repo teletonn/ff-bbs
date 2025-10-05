@@ -15,7 +15,7 @@ if not rawLLMQuery:
 
 # LLM System Variables
 ollamaAPI = ollamaHostName + "/api/generate"
-tokens = 120 # max charcters for the LLM response, this is the max length of the response also in prompts
+tokens = 1000 # max charcters for the LLM response, this is the max length of the response also in prompts
 requestTruncation = True # if True, the LLM "will" truncate the response 
 
 openaiAPI = "https://api.openai.com/v1/completions" # not used, if you do push a enhancement!
@@ -39,7 +39,6 @@ truncatePrompt = f"truncate this as short as possible:\n"
 meshBotAI = """
     FROM {llmModel}
     SYSTEM
-    You must keep responses under 120 characters at all times, the response will be cut off if it exceeds this limit.
     You must respond in plain text standard ASCII characters, or emojis.
     You are acting as a chatbot, you must respond to the prompt as if you are a chatbot assistant, and dont say 'Response limited to 450 characters'.
     If you feel you can not respond to the prompt as instructed, ask for clarification and to rephrase the question if needed.
@@ -166,22 +165,6 @@ def llm_query(input, nodeID=0, location_name=None):
     
     # cleanup for message output
     response = result.strip().replace('\n', ' ')
-    
-    if rawLLMQuery and requestTruncation and len(response) > 450:
-        #retryy loop to truncate the response
-        logger.warning(f"System: LLM Query: Response exceeded {tokens} characters, requesting truncation")
-        truncateQuery = {"model": llmModel, "prompt": truncatePrompt + response, "stream": False, "max_tokens": tokens}
-        truncateResult = requests.post(ollamaAPI, data=json.dumps(truncateQuery))
-        if truncateResult.status_code == 200:
-            truncate_json = truncateResult.json()
-            result = truncate_json.get("response", "")
-
-        else:
-            #use the original result if truncation fails
-            logger.warning("System: LLM Query: Truncation failed, using original response")
-        
-        # cleanup for message output
-        response = result.strip().replace('\n', ' ')
 
     # done with the query, remove the user from the anti flood list
     antiFloodLLM.remove(nodeID)
