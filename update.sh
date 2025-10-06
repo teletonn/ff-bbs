@@ -37,6 +37,15 @@ if ! git pull origin main --rebase; then
     fi
 fi
 
+# Database synchronization
+echo "Synchronizing database..."
+if [ -f "webui/dashboard.db" ]; then
+    echo "Backing up current dashboard.db..."
+    cp webui/dashboard.db webui/dashboard.db.backup
+fi
+echo "Copying dashboard template..."
+cp webui/dashboard_template.db webui/dashboard.db
+
 # Install or update dependencies
 echo "Installing or updating dependencies..."
 if pip install -r requirements.txt --upgrade 2>&1 | grep -q "externally-managed-environment"; then
