@@ -375,10 +375,12 @@ class TestMessageSending(unittest.TestCase):
         interface1 = self.mock_interface
         myNodeNum1 = 11111111
 
-        # Patch the db connection
+        # Patch the db connection and async functions
         self.patches = [
             patch('webui.db_handler.get_db_connection', return_value=mock_conn),
             patch('__main__.time.sleep'),  # Skip sleep delays
+            patch('webui.main.broadcast_message_update'),  # Mock async broadcast
+            patch('asyncio.create_task'),  # Mock asyncio task creation
         ]
 
         for p in self.patches:

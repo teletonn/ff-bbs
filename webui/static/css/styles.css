@@ -674,6 +674,12 @@ button:disabled, .btn:disabled {
     border: 1px solid rgba(244, 67, 54, 0.3);
 }
 
+.status-failed {
+    background: rgba(220, 53, 69, 0.2);
+    color: #DC3545;
+    border: 1px solid rgba(220, 53, 69, 0.3);
+}
+
 .expand-icon {
     color: var(--accent-color);
     font-size: 1.2em;

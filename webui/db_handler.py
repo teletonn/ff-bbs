@@ -129,13 +129,14 @@ def update_node_telemetry(node_id, telemetry_dict=None, **kwargs):
         conn.close()
 
 def check_and_update_offline_nodes():
-    """Check for nodes inactive for more than 5 minutes and set them offline."""
+    """Check for nodes inactive for more than the configured timeout and set them offline."""
     start_time = time.time()
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
-        # 5 minutes = 300 seconds
-        threshold = time.time() - 300
+        # Get configurable timeout from settings (default 30 minutes = 1800 seconds)
+        timeout_minutes = get_setting('node.inactivity_timeout_minutes', 30)
+        threshold = time.time() - (timeout_minutes * 60)
 
         # Debug: Log nodes that would be set offline
         cursor.execute("""
@@ -152,7 +153,7 @@ def check_and_update_offline_nodes():
         """, (threshold,))
         debug_rows = cursor.fetchall()
         if debug_rows:
-            logger.info(f"Debug: {len(debug_rows)} nodes to be set offline")
+            logger.info(f"Debug: {len(debug_rows)} nodes to be set offline (timeout: {timeout_minutes} minutes)")
             for row in debug_rows[:5]:  # Log first 5 for brevity
                 logger.info(f"Debug: Node {row[0]} - last_telemetry={row[1]}, last_seen={row[2]}, latest_message={row[3]}, max={row[4]}, threshold={threshold}")
 
@@ -178,15 +179,31 @@ def check_and_update_offline_nodes():
         if updated_count > 0:
             logger.info(f"Set {updated_count} nodes offline due to inactivity")
 
-            # Attempt direct querying for nodes that were just set offline
-            # This is a placeholder - actual implementation would require integration with mesh_bot
-            # For now, we'll log the intent
+            # Get nodes that were just set offline for broadcasting
             cursor.execute("""
                 SELECT node_id FROM nodes WHERE is_online = 0 AND last_seen < ?
             """, (threshold,))
             offline_nodes = [row[0] for row in cursor.fetchall()]
             if offline_nodes:
-                logger.info(f"Nodes set offline: {offline_nodes}. Direct querying could be implemented here.")
+                logger.info(f"Nodes set offline: {offline_nodes}")
+
+                # Broadcast node status updates via WebSocket
+                try:
+                    from .main import broadcast_map_update
+                    import asyncio
+                    try:
+                        loop = asyncio.get_running_loop()
+                        for node_id in offline_nodes:
+                            asyncio.create_task(broadcast_map_update("node_status", {
+                                "node_id": str(node_id),
+                                "is_online": False,
+                                "reason": "inactivity_timeout"
+                            }))
+                    except RuntimeError:
+                        # No running event loop, skip broadcasting
+                        logger.debug("No running event loop, skipping WebSocket broadcast for offline nodes")
+                except ImportError:
+                    logger.debug("WebSocket broadcasting not available")
 
         conn.commit()
         duration = time.time() - start_time
@@ -1456,6 +1473,22 @@ def update_message_delivery_status(message_id, delivered=None, retry_count=None,
             query = f"UPDATE messages SET {set_parts} WHERE message_id = ?"
             conn.execute(query, values)
             conn.commit()
+
+            # Broadcast message status update via WebSocket
+            try:
+                from .main import broadcast_message_update
+                import asyncio
+                try:
+                    loop = asyncio.get_running_loop()
+                    update_data = {"message_id": message_id}
+                    update_data.update(updates)
+                    asyncio.create_task(broadcast_message_update("message_status", update_data))
+                except RuntimeError:
+                    # No running event loop, skip broadcasting
+                    logger.debug("No running event loop, skipping WebSocket broadcast for message status")
+            except ImportError:
+                logger.debug("WebSocket broadcasting not available for message updates")
+
             return conn.total_changes > 0
         return False
     finally:
@@ -1572,6 +1605,25 @@ def update_message_status(message_id, status, error_message=None):
         conn.close()
 
 @retry_on_lock()
+def handle_message_nack(message_id, nack_reason=None):
+    """Handle NACK response from Meshtastic and mark message as failed."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        error_msg = f"NACK received: {nack_reason}" if nack_reason else "NACK received from Meshtastic"
+        cursor.execute(
+            "UPDATE messages SET status = 'failed', error_message = ?, delivered = 0 WHERE message_id = ?",
+            (error_msg, message_id)
+        )
+        conn.commit()
+        updated = cursor.rowcount > 0
+        if updated:
+            logger.info(f"Message {message_id} marked as failed due to NACK: {error_msg}")
+        return updated
+    finally:
+        conn.close()
+
+@retry_on_lock()
 def retry_message(message_id):
     """Reset message for retry by setting status to 'queued' and resetting attempt counters."""
     conn = get_db_connection()
@@ -1635,5 +1687,66 @@ def update_node_on_packet(node_id, packet_data):
             update_node(node_id, **updates)
             logger.debug(f"Updated node {node_id} with packet data: {updates}")
         return True
+    finally:
+        conn.close()
+
+@retry_on_lock()
+def mark_sent_messages_as_undelivered():
+    """Mark messages with status 'sent' older than the configured timeout as 'undelivered'."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        # Get configurable timeout from settings (default 10 minutes = 600 seconds)
+        timeout_minutes_raw = get_setting('messaging.undelivered_timeout_minutes', 10)
+        try:
+            timeout_minutes = int(timeout_minutes_raw)
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Invalid timeout_minutes setting '{timeout_minutes_raw}', using default 10: {e}")
+            timeout_minutes = 10
+        timeout_seconds = timeout_minutes * 60
+        timeout_timestamp = time.time() - timeout_seconds
+
+        # Update messages that are 'sent', older than timeout, and have no error_message
+        cursor.execute("""
+            UPDATE messages
+            SET status = 'undelivered'
+            WHERE status = 'sent'
+            AND timestamp < ?
+            AND (error_message IS NULL OR error_message = '')
+        """, (timeout_timestamp,))
+
+        updated_count = cursor.rowcount
+        if updated_count > 0:
+            logger.info(f"Marked {updated_count} sent messages as undelivered (timeout: {timeout_minutes} minutes)")
+
+        conn.commit()
+        return updated_count
+    finally:
+        conn.close()
+
+@retry_on_lock()
+def update_old_sent_messages_to_delivered():
+    """Update messages with status 'sent' older than 5 minutes to 'delivered' if they haven't failed."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        # 5 minutes ago in unix timestamp
+        five_minutes_ago = time.time() - 300
+
+        # Update messages that are 'sent', older than 5 minutes, and have no error_message
+        cursor.execute("""
+            UPDATE messages
+            SET status = 'delivered'
+            WHERE status = 'sent'
+            AND timestamp < ?
+            AND (error_message IS NULL OR error_message = '')
+        """, (five_minutes_ago,))
+
+        updated_count = cursor.rowcount
+        if updated_count > 0:
+            logger.info(f"Updated {updated_count} old sent messages to delivered status")
+
+        conn.commit()
+        return updated_count
     finally:
         conn.close()

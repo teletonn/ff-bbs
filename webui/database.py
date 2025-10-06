@@ -44,7 +44,7 @@ def init_db():
         text TEXT,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         is_dm BOOLEAN,
-        status TEXT DEFAULT 'sent' CHECK (status IN ('sent', 'queued', 'delivered', 'undelivered')),
+        status TEXT DEFAULT 'sent' CHECK (status IN ('sent', 'queued', 'delivered', 'undelivered', 'failed')),
         attempt_count INTEGER DEFAULT 0,
         last_attempt_time TIMESTAMP,
         next_retry_time TIMESTAMP,
@@ -357,6 +357,12 @@ def init_db():
     for col_name, col_type in delivery_columns.items():
         if col_name not in message_columns:
             cursor.execute(f"ALTER TABLE messages ADD COLUMN {col_name} {col_type}")
+
+    # Ensure default settings for messaging
+    cursor.execute("SELECT key FROM settings WHERE key = 'messaging.undelivered_timeout_minutes'")
+    if not cursor.fetchone():
+        cursor.execute("INSERT INTO settings (key, value, description) VALUES (?, ?, ?)",
+                      ('messaging.undelivered_timeout_minutes', '10', 'Timeout in minutes after which sent messages are marked as undelivered'))
 
     conn.commit()
     conn.close()

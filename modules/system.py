@@ -749,7 +749,16 @@ def send_message(message, ch, nodeid=0, nodeInt=1, bypassChuncking=False, resend
 
         except Exception as e:
             error_msg = str(e)
-            logger.warning(f"System: Delivery attempt {current_attempt_count} failed for message {message_id}: {error_msg}")
+            # Check for specific connection errors
+            if "Broken pipe" in error_msg or "Errno 32" in error_msg:
+                logger.error(f"System: BrokenPipeError detected on interface{nodeInt} during message {message_id} delivery attempt {current_attempt_count}: {error_msg}")
+                # Trigger reconnection for this interface
+                globals()[f'retry_int{nodeInt}'] = True
+                logger.warning(f"System: Set retry flag for interface{nodeInt} due to BrokenPipeError")
+            elif "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+                logger.warning(f"System: Timeout detected on interface{nodeInt} during message {message_id} delivery attempt {current_attempt_count}: {error_msg}")
+            else:
+                logger.warning(f"System: Delivery attempt {current_attempt_count} failed for message {message_id}: {error_msg}")
 
             # After 3 direct attempts, defer the message
             if current_attempt_count >= start_attempt + max_direct_attempts and current_attempt_count < max_total_attempts:
@@ -1066,8 +1075,18 @@ def handleAlertBroadcast(deviceID=1):
 
 def onDisconnect(interface):
     # Handle disconnection of the interface
-    logger.warning(f"System: Abrupt Disconnection of Interface detected")
+    # Identify which interface disconnected
+    interface_id = None
+    for i in range(1, 10):
+        if globals().get(f'interface{i}') is interface:
+            interface_id = i
+            break
+    logger.warning(f"System: Abrupt Disconnection of Interface{interface_id if interface_id else 'unknown'} detected - triggering immediate reconnection check")
     interface.close()
+    # Set retry flag to initiate reconnection
+    if interface_id:
+        globals()[f'retry_int{interface_id}'] = True
+        logger.info(f"System: Set retry flag for Interface{interface_id} due to disconnect event")
 
 # Telemetry Functions
 telemetryData = {}
@@ -1483,24 +1502,25 @@ async def retry_interface(nodeID):
     if interface is not None:
         globals()[f'retry_int{nodeID}'] = True
         globals()[f'max_retry_count{nodeID}'] -= 1
-        logger.debug(f"System: Retrying interface{nodeID} {globals()[f'max_retry_count{nodeID}']} attempts left")
+        logger.warning(f"System: Initiating retry for interface{nodeID}, {globals()[f'max_retry_count{nodeID}']} attempts remaining")
         try:
             interface.close()
-            logger.debug(f"System: Retrying interface{nodeID} in 15 seconds")
+            logger.debug(f"System: Closed interface{nodeID} for retry, waiting 15 seconds")
         except Exception as e:
-            logger.error(f"System: closing interface{nodeID}: {e}")
+            logger.error(f"System: Error closing interface{nodeID}: {e}")
 
     if globals()[f'max_retry_count{nodeID}'] == 0:
-        logger.critical(f"System: Max retry count reached for interface{nodeID}")
+        logger.critical(f"System: Max retry count reached for interface{nodeID}, exiting")
         exit_handler()
 
-    await asyncio.sleep(15)
+    await asyncio.sleep(1)
 
     try:
         if retry_int:
             interface = None
             globals()[f'interface{nodeID}'] = None
             interface_type = globals()[f'interface{nodeID}_type']
+            logger.info(f"System: Attempting to reopen interface{nodeID} of type {interface_type}")
             if interface_type == 'serial':
                 logger.debug(f"System: Retrying Interface{nodeID} Serial on port: {globals().get(f'port{nodeID}')}")
                 globals()[f'interface{nodeID}'] = meshtastic.serial_interface.SerialInterface(globals().get(f'port{nodeID}'))
@@ -1510,12 +1530,13 @@ async def retry_interface(nodeID):
             elif interface_type == 'ble':
                 logger.debug(f"System: Retrying Interface{nodeID} BLE on mac: {globals().get(f'mac{nodeID}')}")
                 globals()[f'interface{nodeID}'] = meshtastic.ble_interface.BLEInterface(globals().get(f'mac{nodeID}'))
-            logger.debug(f"System: Interface{nodeID} Opened!")
+            logger.info(f"System: Successfully reopened interface{nodeID}")
             # reset the retry_int and retry_count
             globals()[f'max_retry_count{nodeID}'] = interface_retry_count
             globals()[f'retry_int{nodeID}'] = False
     except Exception as e:
-        logger.error(f"System: Error Opening interface{nodeID} on: {e}")
+        logger.error(f"System: Failed to reopen interface{nodeID}: {e}")
+        # Do not reset retry_int here, let watchdog handle next attempt
 
 handleSentinel_spotted = []
 handleSentinel_loop = 0
@@ -1564,43 +1585,49 @@ async def handleSentinel(deviceID):
 
 async def watchdog():
     global telemetryData, retry_int1, retry_int2, retry_int3, retry_int4, retry_int5, retry_int6, retry_int7, retry_int8, retry_int9
+    counter = 0
     while True:
-        await asyncio.sleep(20)
+        await asyncio.sleep(1)
+        counter += 1
 
-        # check all interfaces
+        # Check for retries every second for immediate reconnection
         for i in range(1, 10):
-            interface = globals().get(f'interface{i}')
-            retry_int = globals().get(f'retry_int{i}')
-            if interface is not None and not retry_int and globals().get(f'interface{i}_enabled'):
-                try:
-                    firmware = getNodeFirmware(0, i)
-                except Exception as e:
-                    logger.error(f"System: communicating with interface{i}, trying to reconnect: {e}")
-                    globals()[f'retry_int{i}'] = True
-
-                if not globals()[f'retry_int{i}']:
-                    if sentry_enabled:
-                        await handleSentinel(i)
-
-                    handleMultiPing(0, i)
-
-                    if wxAlertBroadcastEnabled or emergencyAlertBrodcastEnabled or volcanoAlertBroadcastEnabled:
-                        handleAlertBroadcast(i)
-
-                    intData = displayNodeTelemetry(0, i)
-                    if intData != -1 and telemetryData[0][f'lastAlert{i}'] != intData:
-                        logger.debug(intData + f" Firmware:{firmware}")
-                        telemetryData[0][f'lastAlert{i}'] = intData
-
-            if globals()[f'retry_int{i}'] and globals()[f'interface{i}_enabled']:
+            if globals().get(f'retry_int{i}') and globals().get(f'interface{i}_enabled'):
                 try:
                     await retry_interface(i)
                 except Exception as e:
                     logger.error(f"System: retrying interface{i}: {e}")
-        
-        # check for noisy telemetry
-        if noisyNodeLogging:
-            noisyTelemetryCheck()
+
+        # Perform full interface checks every 20 seconds
+        if counter % 20 == 0:
+            # check all interfaces
+            for i in range(1, 10):
+                interface = globals().get(f'interface{i}')
+                retry_int = globals().get(f'retry_int{i}')
+                if interface is not None and not retry_int and globals().get(f'interface{i}_enabled'):
+                    try:
+                        firmware = getNodeFirmware(0, i)
+                    except Exception as e:
+                        logger.error(f"System: Failed to communicate with interface{i}, error: {e} - initiating reconnection")
+                        globals()[f'retry_int{i}'] = True
+
+                    if not globals()[f'retry_int{i}']:
+                        if sentry_enabled:
+                            await handleSentinel(i)
+
+                        handleMultiPing(0, i)
+
+                        if wxAlertBroadcastEnabled or emergencyAlertBrodcastEnabled or volcanoAlertBroadcastEnabled:
+                            handleAlertBroadcast(i)
+
+                        intData = displayNodeTelemetry(0, i)
+                        if intData != -1 and telemetryData[0][f'lastAlert{i}'] != intData:
+                            logger.debug(intData + f" Firmware:{firmware}")
+                            telemetryData[0][f'lastAlert{i}'] = intData
+
+            # check for noisy telemetry
+            if noisyNodeLogging:
+                noisyTelemetryCheck()
 
 def exit_handler():
     # Close the interface and save the BBS messages

@@ -27,3 +27,7 @@ data/qrz.db
 news.txt
 alert.txt
 bee.txt
+
+# database files
+dashboard.db*
+webui/dashboard.db*

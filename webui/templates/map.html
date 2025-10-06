@@ -385,12 +385,11 @@ textarea:focus {
 /* Toast notifications */
 .toast-container {
    position: fixed;
-   top: 20px;
-   left: 50%;
-   transform: translateX(-50%);
+   bottom: 20px;
+   right: 20px;
    z-index: 1001;
    display: flex;
-   flex-direction: column;
+   flex-direction: column-reverse;
    gap: 10px;
    pointer-events: none;
 }
@@ -629,7 +628,12 @@ textarea:focus {
   <div style="display: flex; flex-wrap: wrap; gap: 15px; align-items: center;">
     <label style="display: flex; align-items: center; gap: 5px;">
       <input type="checkbox" id="showRoutes" style="margin: 0;">
-      <span>Показать маршруты</span>
+      <span>Гео-маршруты</span>
+    </label>
+
+    <label style="display: flex; align-items: center; gap: 5px;">
+      <input type="checkbox" id="disableClustering" style="margin: 0;">
+      <span>Группы</span>
     </label>
 
     <div style="display: flex; gap: 10px; align-items: center;">
@@ -719,10 +723,6 @@ let currentFilters = {
     routes: false
   }
 };
-let websocket = null;
-let websocketReconnectAttempts = 0;
-let websocketReconnectTimeout = null;
-let maxWebSocketReconnectAttempts = 10;
 let visibleNodes = [];
 let visibleUsers = [];
 let visibleZones = [];
@@ -772,13 +772,12 @@ function showError(message, type = 'error', retryCallback = null) {
    showToast(message, type === 'error' ? 'error' : type);
  }
 
-function showToast(message, type = 'info', duration = 4000) {
+function showToast(message, type = 'info', duration = 3000) {
   const container = document.getElementById('toast-container');
   const toast = document.createElement('div');
   toast.className = `toast ${type}`;
   toast.innerHTML = `
     <span>${message}</span>
-    <button class="close-btn" onclick="this.parentElement.remove()" aria-label="Закрыть уведомление">&times;</button>
   `;
 
   container.appendChild(toast);
@@ -787,7 +786,7 @@ function showToast(message, type = 'info', duration = 4000) {
   setTimeout(() => toast.classList.add('show'), 10);
 
   // Auto-hide
-  const hideTimeout = setTimeout(() => {
+  setTimeout(() => {
     toast.classList.add('hide');
     setTimeout(() => {
       if (toast.parentNode) {
@@ -795,11 +794,6 @@ function showToast(message, type = 'info', duration = 4000) {
       }
     }, 300);
   }, duration);
-
-  // Clear timeout if manually closed
-  toast.querySelector('.close-btn').addEventListener('click', () => {
-    clearTimeout(hideTimeout);
-  });
 }
 
 function showSuccess(message) {
@@ -827,7 +821,6 @@ function handleKeyboardShortcuts(event) {
     case 'f':
       event.preventDefault();
       document.getElementById('searchFilter').focus();
-      showSuccess('Фокус на поле поиска');
       break;
     case 'l':
       event.preventDefault();
@@ -1013,146 +1006,9 @@ function initMap() {
   map.on('zoomend', debouncedUpdateVisibleData);
 }
 
-function connectWebSocket() {
-   // Clear any existing reconnection timeout
-   if (websocketReconnectTimeout) {
-     clearTimeout(websocketReconnectTimeout);
-     websocketReconnectTimeout = null;
-   }
 
-   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-   const wsUrl = `${protocol}//${window.location.host}/ws/map`;
 
-   websocket = new WebSocket(wsUrl);
 
-   websocket.onopen = function(event) {
-     console.log('WebSocket connected for map updates');
-     websocketReconnectAttempts = 0; // Reset reconnection attempts on successful connection
-     showSuccess('Соединение с сервером установлено');
-   };
-
-   websocket.onmessage = function(event) {
-     try {
-       const data = JSON.parse(event.data);
-       handleMapUpdate(data);
-     } catch (error) {
-       console.error('Error parsing WebSocket message:', error);
-       showError('Ошибка обработки данных от сервера', 'warning');
-     }
-   };
-
-   websocket.onclose = function(event) {
-     console.log('WebSocket disconnected, code:', event.code, 'reason:', event.reason);
-
-     // Don't reconnect if it was a clean close (code 1000) or if max attempts reached
-     if (event.code === 1000 || websocketReconnectAttempts >= maxWebSocketReconnectAttempts) {
-       console.log('WebSocket connection permanently closed or max reconnection attempts reached');
-       showError('Соединение с сервером потеряно', 'warning');
-       return;
-     }
-
-     websocketReconnectAttempts++;
-
-     // Exponential backoff: base delay of 1 second, doubling each attempt, max 60 seconds
-     const delay = Math.min(1000 * Math.pow(2, websocketReconnectAttempts - 1), 60000);
-
-     console.log(`Attempting to reconnect WebSocket in ${delay}ms (attempt ${websocketReconnectAttempts}/${maxWebSocketReconnectAttempts})`);
-
-     if (websocketReconnectAttempts === 1) {
-       showError(`Соединение потеряно. Попытка переподключения...`, 'warning');
-     }
-
-     websocketReconnectTimeout = setTimeout(() => {
-       connectWebSocket();
-     }, delay);
-   };
-
-   websocket.onerror = function(error) {
-     console.error('WebSocket error:', error);
-     // Don't show error here as onclose will handle reconnection
-   };
- }
-
-function disconnectWebSocket() {
-   if (websocket) {
-     websocket.close(1000, 'Client disconnecting');
-     websocket = null;
-   }
-   if (websocketReconnectTimeout) {
-     clearTimeout(websocketReconnectTimeout);
-     websocketReconnectTimeout = null;
-   }
-   websocketReconnectAttempts = 0;
- }
-
-function handleMapUpdate(update) {
-  console.log('Received map update:', update);
-
-  if (update.type === 'node_position') {
-    // Update node position in real-time
-    updateNodePosition(update.data);
-  } else if (update.type === 'node_activity') {
-    // Update node last seen time
-    updateNodeActivity(update.data);
-  } else if (update.type === 'node_status') {
-    // Update node status (online/offline)
-    updateNodeStatus(update.data);
-  } else if (update.type === 'zone_update') {
-    // Update zone information
-    updateZone(update.data);
-  }
-}
-
-function updateNodePosition(data) {
-  // Find existing marker and update its position
-  nodeLayer.eachLayer(function(layer) {
-    if (layer.options.nodeId === data.node_id) {
-      const newLatLng = [parseFloat(data.lat), parseFloat(data.lng)];
-      layer.setLatLng(newLatLng);
-
-      // Update tooltip with new timestamp
-      const labelText = layer.getTooltip().getContent().split('<br>')[0] + '<br>' + formatTimestamp(data.last_seen);
-      layer.setTooltipContent(labelText);
-
-      // Update popup with new data
-      layer.setPopupContent(
-        layer.getPopup().getContent().replace(/Последний раз: .*/, `Последний раз: ${formatTimestamp(data.last_seen)}`)
-      );
-
-      console.log(`Updated position for node ${data.node_id}: ${data.lat}, ${data.lng}`);
-      return false;
-    }
-  });
-}
-
-function updateNodeActivity(data) {
-  // Update node last seen time in tooltip and popup
-  nodeLayer.eachLayer(function(layer) {
-    if (layer.options.nodeId === data.node_id) {
-      // Update tooltip with new timestamp
-      const labelText = layer.getTooltip().getContent().split('<br>')[0] + '<br>' + formatTimestamp(data.last_seen);
-      layer.setTooltipContent(labelText);
-
-      // Update popup with new data
-      layer.setPopupContent(
-        layer.getPopup().getContent().replace(/Последний раз: .*/, `Последний раз: ${formatTimestamp(data.last_seen)}`)
-      );
-
-      console.log(`Updated activity for node ${data.node_id}: last seen ${formatTimestamp(data.last_seen)}`);
-      return false;
-    }
-  });
-}
-
-function updateNodeStatus(data) {
-  // Reload map data to reflect status changes
-  loadAllData();
-}
-
-function updateZone(data) {
-   // Reload zones to reflect changes
-   loadAllData();
- }
 
 // Data validation functions
 function validateNodeData(nodes) {
@@ -1365,7 +1221,6 @@ async function loadAllData(retryCount = 0) {
 
      hideLoading();
      updateVisibleData();
-     showSuccess('Данные карты успешно загружены');
 
    } catch (err) {
      clearTimeout(loadTimeout);
@@ -1802,7 +1657,6 @@ async function loadRoutes() {
     visibleRoutes = routes;
 
     hideLoading();
-    showSuccess(`Загружено ${routes.length} маршрутов`);
   } catch (error) {
     console.error('Error loading routes:', error);
     hideLoading();
@@ -1900,19 +1754,6 @@ function toggleLayer(layer) {
    currentFilters.layerVisibility[layer] = !currentFilters.layerVisibility[layer];
    updateLayerVisibility();
    synchronizeFilterUI(); // Ensure UI stays synchronized
-
-   const layerNames = {
-     nodes: 'Узлы',
-     users: 'Пользователи',
-     zones: 'Зоны',
-     routes: 'Маршруты'
-   };
-
-   if (currentFilters.layerVisibility[layer]) {
-     showSuccess(`Слой "${layerNames[layer]}" включен`);
-   } else {
-     showSuccess(`Слой "${layerNames[layer]}" отключен`);
-   }
  }
 
 // Populate node selector
@@ -1947,14 +1788,13 @@ async function populateNodeSelector() {
 // Initialize map and load data when the page loads
 document.addEventListener('DOMContentLoaded', async function() {
   initMap();
-  connectWebSocket();
   loadAllData();
   await populateNodeSelector();
 
-  // Periodic data updates every 30 seconds
+  // Periodic data updates every 10 seconds
   dataUpdateInterval = setInterval(() => {
     loadAllData();
-  }, 30000);
+  }, 10000);
 
   // Set up filter event listeners
   document.getElementById('showRoutes').addEventListener('change', handleFilterChange);
@@ -1982,6 +1822,20 @@ document.addEventListener('DOMContentLoaded', async function() {
   document.getElementById('exportCSV').addEventListener('click', () => exportData('csv'));
   document.getElementById('exportJSON').addEventListener('click', () => exportData('json'));
 
+  // Disable clustering checkbox event listener
+  document.getElementById('disableClustering').addEventListener('change', function() {
+    const disable = this.checked;
+    const zoomLevel = disable ? 0 : 18;
+
+    nodeLayer.options.disableClusteringAtZoom = zoomLevel;
+    userLayer.options.disableClusteringAtZoom = zoomLevel;
+    zoneLayer.options.disableClusteringAtZoom = zoomLevel;
+
+    nodeLayer.refreshClusters();
+    userLayer.refreshClusters();
+    zoneLayer.refreshClusters();
+  });
+
   // Keyboard navigation
   document.addEventListener('keydown', handleKeyboardShortcuts);
 
@@ -1990,7 +1844,6 @@ document.addEventListener('DOMContentLoaded', async function() {
 
   // Cleanup on page unload
   window.addEventListener('beforeunload', function() {
-    disconnectWebSocket();
     if (loadTimeout) {
       clearTimeout(loadTimeout);
     }
@@ -2007,15 +1860,12 @@ function exportData(format) {
     switch (format) {
       case 'gpx':
         exportGPX();
-        showSuccess('GPX файл экспортирован');
         break;
       case 'csv':
         exportCSV();
-        showSuccess('CSV файл экспортирован');
         break;
       case 'json':
         exportJSON();
-        showSuccess('JSON файл экспортирован');
         break;
     }
   } catch (error) {
@@ -2124,7 +1974,6 @@ function sendMessage(nodeId) {
     .then(response => response.json())
     .then(data => {
       if (data.success) {
-        showSuccess('Сообщение отправлено успешно');
         modal.remove();
       } else {
         showError('Ошибка отправки сообщения: ' + (data.message || 'Неизвестная ошибка'), 'error');
@@ -2291,7 +2140,6 @@ function traceRoute(nodeId) {
     }
 
     content.innerHTML = html;
-    showSuccess('Трассировка пакетов завершена');
   }
 
   // Function to draw packet path on map
@@ -2414,7 +2262,6 @@ function showRoute(nodeId) {
      synchronizeFilterUI(); // Synchronize UI with restored filters
      updateLayerVisibility();
      loadRoutes();
-     showSuccess('Фильтры маршрута сброшены');
    }, 10000);
  }
 

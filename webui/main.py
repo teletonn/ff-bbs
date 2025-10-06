@@ -13,6 +13,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timezone, timedelta
 from .database import init_db
+import asyncio
 from .db_handler import (
     get_db_connection, insert_command, get_nodes,
     get_geofences, get_geofence, create_geofence, update_geofence, delete_geofence,
@@ -28,7 +29,8 @@ from .db_handler import (
     get_alert_configs, get_alert_config, create_alert_config, update_alert_config, delete_alert_config,
     get_processes, get_process, create_process, update_process, delete_process, update_process_run_count,
     get_zones, get_zone, create_zone, update_zone, delete_zone, get_active_zones,
-    update_message_status, retry_message, delete_message_by_user, update_node_on_packet
+    update_message_status, retry_message, delete_message_by_user, update_node_on_packet,
+    update_old_sent_messages_to_delivered, mark_sent_messages_as_undelivered
 )
 import sqlite3
 import json
@@ -38,6 +40,7 @@ import os
 import asyncio
 from typing import List
 import json
+from modules.log import logger
 
 # WebSocket connection manager
 class ConnectionManager:
@@ -61,6 +64,23 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# Background task for message retry mechanism
+async def message_retry_task():
+    """Periodic task to mark sent messages as undelivered after timeout."""
+    while True:
+        try:
+            mark_sent_messages_as_undelivered()
+        except Exception as e:
+            print(f"Error in message retry task: {e}")
+        # Run every 5 minutes
+        await asyncio.sleep(300)
+
+app = FastAPI(
+    title="Firefly-BBS Web Dashboard",
+    description="Веб-интерфейс для управления и мониторинга сети 'Светлячок'.",
+    version="0.1.0"
+)
+
 # Инициализация базы данных при старте
 try:
     init_db()
@@ -80,15 +100,21 @@ try:
             print("Created initial admin user: username=admin, password=admin")
         else:
             print("Failed to create initial admin user")
+
 except Exception as e:
+    logger.error(f"Ошибка при инициализации базы данных: {e}")
     print(f"Ошибка при инициализации базы данных: {e}")
 
-
-app = FastAPI(
-    title="Firefly-BBS Web Dashboard",
-    description="Веб-интерфейс для управления и мониторинга сети 'Светлячок'.",
-    version="0.1.0"
-)
+@app.on_event("startup")
+async def startup_event():
+    """Start background tasks when the application starts."""
+    try:
+        asyncio.create_task(message_retry_task())
+        print("Message retry background task started")
+        logger.info("Message retry background task started")
+    except Exception as e:
+        print(f"Failed to start message retry task: {e}")
+        logger.error(f"Failed to start message retry task: {e}")
 
 app.add_middleware(SessionMiddleware, secret_key=secrets.token_hex(32), max_age=86400*30)  # 30 days persistence
 
@@ -273,6 +299,16 @@ async def get_service_worker():
 # Function to broadcast map updates
 async def broadcast_map_update(update_type: str, data: dict):
     """Broadcast map data updates to all connected WebSocket clients."""
+    message = {
+        "type": update_type,
+        "data": data,
+        "timestamp": datetime.now().isoformat()
+    }
+    await manager.broadcast(json.dumps(message))
+
+# Function to broadcast message updates
+async def broadcast_message_update(update_type: str, data: dict):
+    """Broadcast message data updates to all connected WebSocket clients."""
     message = {
         "type": update_type,
         "data": data,
@@ -474,6 +510,9 @@ async def api_get_messages(
     dm_only: bool = Query(False),
     channel_only: bool = Query(False)
 ):
+    # Removed: No longer auto-marking sent messages as delivered after timeout
+    # update_old_sent_messages_to_delivered()
+
     offset = (page - 1) * limit
     conn = get_db_connection()
     try:
@@ -1508,7 +1547,7 @@ async def api_send_message(request: Request, current_user: dict = Depends(get_cu
     try:
         body = await request.json()
         mode = body.get('mode', '').strip()  # 'channel' or 'dm'
-        recipient = body.get('recipient', '').strip()  # channel number or node_id/user_id
+        recipient = body.get('recipient', '').strip()  # prefixed recipient like "channel:0" or "node:123"
         message = body.get('message', '').strip()
 
         if not mode or mode not in ['channel', 'dm']:
@@ -1520,6 +1559,13 @@ async def api_send_message(request: Request, current_user: dict = Depends(get_cu
         if len(message) > 500:
             raise HTTPException(status_code=400, detail="Message must be 500 characters or less")
 
+        # Parse recipient
+        parts = recipient.split(':')
+        if len(parts) != 2:
+            raise HTTPException(status_code=400, detail="Invalid recipient format")
+        type_ = parts[0]
+        value = parts[1]
+
         # Basic sanitization: remove potential HTML/JS (simple check)
         if '<script' in message.lower() or 'javascript:' in message.lower():
             raise HTTPException(status_code=400, detail="Invalid message content")
@@ -1530,16 +1576,16 @@ async def api_send_message(request: Request, current_user: dict = Depends(get_cu
         if 'send_message' not in [t.strip() for t in allowed_types]:
             raise HTTPException(status_code=403, detail="Command type not allowed")
 
-        if mode == 'channel':
-            # For channel: target=0 (broadcast), channel=recipient
-            parameters = {'target': '0', 'message': message, 'channel': recipient}
-        else:  # dm
-            # For DM: target=recipient (node_id), channel=0
-            parameters = {'target': recipient, 'message': message, 'channel': '0'}
+        if type_ == 'channel':
+            # For channel: target=0 (broadcast), channel=value
+            parameters = {'target': '0', 'message': message, 'channel': value}
+        else:  # node or user, treat as dm
+            # For DM: target=value (node_id), channel=0
+            parameters = {'target': value, 'message': message, 'channel': '0'}
 
         cmd_id = insert_command('send_message', parameters, sender_user_id)
 
-        logging.info(f"Message command inserted: ID={cmd_id}, mode={mode}, recipient={recipient}, user={sender_user_id}, node_id={current_user.get('node_id')}")
+        logging.info(f"Message command inserted: ID={cmd_id}, mode={mode}, type={type_}, value={value}, user={sender_user_id}, node_id={current_user.get('node_id')}")
 
         return {"success": True, "command_id": cmd_id}
 

@@ -52,6 +52,16 @@ let channels = [];
 let users = [];
 let nodes = [];
 let filterTimeout = null;
+let websocket = null;
+let websocketReconnectAttempts = 0;
+let websocketReconnectTimeout = null;
+let maxWebSocketReconnectAttempts = 10;
+
+const channelMapping = {
+  '🌞FireFly': 0,
+  '🌍HOME': 1,
+  // Add more channel mappings as needed
+};
 
 // Debounced filter function
 function debouncedFilter() {
@@ -69,6 +79,13 @@ function loadDropdowns() {
    ])
    .then(([chData, userData, nodeData]) => {
      channels = chData;
+     // Add default channels if not present
+     const defaultChannels = ['0', '1', '2', '3', '4', '5', '6', '7'];
+     defaultChannels.forEach(ch => {
+       if (!channels.includes(ch)) {
+         channels.push(ch);
+       }
+     });
      users = userData;
      nodes = nodeData;
      updateRecipients();
@@ -77,34 +94,42 @@ function loadDropdowns() {
 }
 
 function updateRecipients() {
-    const recipientSelect = document.getElementById('recipient-select');
-    recipientSelect.innerHTML = '<option value="">Выберите получателя</option>';
+     const recipientSelect = document.getElementById('recipient-select');
+     recipientSelect.innerHTML = '<option value="">Выберите получателя</option>';
 
-   // Add users
-   users.forEach(user => {
-     if (user.node_id) {
-       const option = document.createElement('option');
-       option.value = user.node_id;
-       option.textContent = `${user.username} (Пользователь)`;
-       recipientSelect.appendChild(option);
-     }
-   });
+    // Add users
+    users.forEach(user => {
+      if (user.node_id) {
+        const option = document.createElement('option');
+        option.value = "user:" + user.node_id;
+        option.textContent = `${user.username} (Пользователь)`;
+        recipientSelect.appendChild(option);
+      }
+    });
 
-   // Add nodes
-   nodes.forEach(node => {
-     const option = document.createElement('option');
-     option.value = node.id;
-     option.textContent = `${node.name || node.id} (Узел)`;
-     recipientSelect.appendChild(option);
-   });
+    // Add nodes
+    nodes.forEach(node => {
+      const option = document.createElement('option');
+      option.value = "node:" + node.id;
+      option.textContent = `${node.name || node.id} (Узел)`;
+      recipientSelect.appendChild(option);
+    });
 
-   // Add channels
-   channels.forEach(ch => {
-     const option = document.createElement('option');
-     option.value = ch;
-     option.textContent = `${ch} (Канал)`;
-     recipientSelect.appendChild(option);
-   });
+    // Add channels
+    channels.forEach(ch => {
+      let index, displayName;
+      if (channelMapping[ch] !== undefined) {
+        index = channelMapping[ch];
+        displayName = ch;
+      } else {
+        index = parseInt(ch) || 0;
+        displayName = ch;
+      }
+      const option = document.createElement('option');
+      option.value = "channel:" + index.toString();
+      option.textContent = `${displayName} (Канал)`;
+      recipientSelect.appendChild(option);
+    });
 }
 
 
@@ -145,6 +170,9 @@ function createMessageCard(msg) {
     } else if (status === 'undelivered') {
         statusText = 'Не доставлено';
         statusClass = 'status-undelivered';
+    } else if (status === 'failed') {
+        statusText = 'Ошибка доставки';
+        statusClass = 'status-failed';
     } else if (status === 'sent') {
         statusText = 'Отправлено';
         statusClass = 'status-pending';
@@ -155,7 +183,7 @@ function createMessageCard(msg) {
     const toDisplay = msg.to_name || msg.to_id || 'Неизвестно';
 
     // Determine if retry button should be enabled
-    const canRetry = status === 'queued' || status === 'undelivered';
+    const canRetry = status === 'queued' || status === 'undelivered' || status === 'failed';
     const retryButtonDisabled = canRetry ? '' : 'disabled';
 
     card.innerHTML = `
@@ -262,7 +290,7 @@ function loadMessages(page = 1, filter = '', filterType = 'from_id') {
         }
         document.getElementById('next-btn').disabled = data.length < 20;
         document.getElementById('prev-btn').disabled = page === 1;
-        document.getElementById('page-info').textContent = `Page ${page}`;
+        document.getElementById('page-info').textContent = `Страница ${page}`;
         currentPage = page;
         currentFilter = filter;
         currentFilterType = filterType;
@@ -320,30 +348,32 @@ window.onclick = function(event) {
 }
 
 function sendMessage() {
-    const recipient = document.getElementById('recipient-select').value;
-    const message = document.getElementById('message-input').value.trim();
+     const recipient = document.getElementById('recipient-select').value;
+     const message = document.getElementById('message-input').value.trim();
 
-    if (!recipient || !message) {
-      alert('Пожалуйста, заполните все поля.');
-      return;
-    }
+     if (!recipient || !message) {
+       alert('Пожалуйста, заполните все поля.');
+       return;
+     }
 
-    if (message.length > 500) {
-      alert('Сообщение должно быть не более 500 символов.');
-      return;
-    }
+     if (message.length > 500) {
+       alert('Сообщение должно быть не более 500 символов.');
+       return;
+     }
 
-    const isChannel = channels.includes(recipient);
-    const mode = isChannel ? 'channel' : 'dm';
+     const parts = recipient.split(':');
+     const type = parts[0];
+     const value = parts[1];
+     const mode = type === 'channel' ? 'channel' : 'dm';
 
-    fetch('/api/v1/messages/send', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ mode: mode, recipient: recipient, message: message }),
-      credentials: 'same-origin'
-    })
+     fetch('/api/v1/messages/send', {
+       method: 'POST',
+       headers: {
+         'Content-Type': 'application/json',
+       },
+       body: JSON.stringify({ mode: mode, recipient: recipient, message: message }),
+       credentials: 'same-origin'
+     })
     .then(response => {
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -425,8 +455,133 @@ function deleteMessage(messageId) {
     });
 }
 
+function connectWebSocket() {
+    // Clear any existing reconnection timeout
+    if (websocketReconnectTimeout) {
+        clearTimeout(websocketReconnectTimeout);
+        websocketReconnectTimeout = null;
+    }
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws/map`;
+
+    websocket = new WebSocket(wsUrl);
+
+    websocket.onopen = function(event) {
+        console.log('WebSocket connected for message updates');
+        websocketReconnectAttempts = 0;
+    };
+
+    websocket.onmessage = function(event) {
+        try {
+            const data = JSON.parse(event.data);
+            handleMessageUpdate(data);
+        } catch (error) {
+            console.error('Error parsing WebSocket message:', error);
+        }
+    };
+
+    websocket.onclose = function(event) {
+        console.log('WebSocket disconnected, code:', event.code, 'reason:', event.reason);
+
+        // Don't reconnect if it was a clean close (code 1000) or if max attempts reached
+        if (event.code === 1000 || websocketReconnectAttempts >= maxWebSocketReconnectAttempts) {
+            console.log('WebSocket connection permanently closed or max reconnection attempts reached');
+            return;
+        }
+
+        websocketReconnectAttempts++;
+
+        // Exponential backoff: base delay of 1 second, doubling each attempt, max 60 seconds
+        const delay = Math.min(1000 * Math.pow(2, websocketReconnectAttempts - 1), 60000);
+
+        console.log(`Attempting to reconnect WebSocket in ${delay}ms (attempt ${websocketReconnectAttempts}/${maxWebSocketReconnectAttempts})`);
+
+        websocketReconnectTimeout = setTimeout(() => {
+            connectWebSocket();
+        }, delay);
+    };
+
+    websocket.onerror = function(error) {
+        console.error('WebSocket error:', error);
+        // Don't show error here as onclose will handle reconnection
+    };
+}
+
+function disconnectWebSocket() {
+    if (websocket) {
+        websocket.close(1000, 'Client disconnecting');
+        websocket = null;
+    }
+    if (websocketReconnectTimeout) {
+        clearTimeout(websocketReconnectTimeout);
+        websocketReconnectTimeout = null;
+    }
+    websocketReconnectAttempts = 0;
+}
+
+function handleMessageUpdate(update) {
+    console.log('Received message update:', update);
+
+    if (update.type === 'message_status') {
+        // Update message status in real-time
+        updateMessageStatus(update.data);
+    }
+}
+
+function updateMessageStatus(data) {
+    // Find the message card and update its status
+    const messageCards = document.querySelectorAll('.message-card');
+    messageCards.forEach(card => {
+        const messageId = card.querySelector('button[onclick*="retryMessage"]')?.getAttribute('onclick')?.match(/retryMessage\((\d+)\)/)?.[1];
+        if (messageId && data.message_id == messageId) {
+            // Update the status display
+            const statusSpan = card.querySelector('.status');
+            if (statusSpan && data.status) {
+                let statusText = 'Неизвестно';
+                let statusClass = 'status-unknown';
+                const status = data.status;
+                if (status === 'delivered') {
+                    statusText = 'Доставлено';
+                    statusClass = 'status-delivered';
+                } else if (status === 'queued') {
+                    statusText = 'Ожидает';
+                    statusClass = 'status-pending';
+                } else if (status === 'undelivered') {
+                    statusText = 'Не доставлено';
+                    statusClass = 'status-undelivered';
+                } else if (status === 'failed') {
+                    statusText = 'Ошибка доставки';
+                    statusClass = 'status-failed';
+                } else if (status === 'sent') {
+                    statusText = 'Отправлено';
+                    statusClass = 'status-pending';
+                }
+
+                statusSpan.className = `status ${statusClass}`;
+                statusSpan.textContent = statusText;
+
+                // Update retry button state
+                const retryButton = card.querySelector('button[onclick*="retryMessage"]');
+                if (retryButton) {
+                    const canRetry = status === 'queued' || status === 'undelivered' || status === 'failed';
+                    retryButton.disabled = !canRetry;
+                }
+
+                console.log(`Updated status for message ${data.message_id}: ${statusText}`);
+            }
+        }
+    });
+}
+
 loadDropdowns();
 loadMessages();
+connectWebSocket();
 setInterval(() => loadMessages(currentPage, currentFilter, currentFilterType), 30000);
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', function() {
+    disconnectWebSocket();
+});
 </script>
 {% endblock %}
