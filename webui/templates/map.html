@@ -632,8 +632,13 @@ textarea:focus {
     </label>
 
     <label style="display: flex; align-items: center; gap: 5px;">
-      <input type="checkbox" id="disableClustering" style="margin: 0;">
+      <input type="checkbox" id="disableClustering" checked style="margin: 0;">
       <span>Группы</span>
+    </label>
+
+    <label style="display: flex; align-items: center; gap: 5px;">
+      <input type="checkbox" id="showLabels" checked style="margin: 0;">
+      <span>Подписи</span>
     </label>
 
     <div style="display: flex; gap: 10px; align-items: center;">
@@ -710,6 +715,7 @@ let currentFilters = {
   timeFilter: 24,
   selectedNode: null,
   searchTerm: '',
+  showLabels: true,
   statusFilters: {
     online: true,
     moving: true,
@@ -730,6 +736,8 @@ let visibleRoutes = [];
 let allNodes = [];
 let allUsers = [];
 let allZones = [];
+let nodeMarkers = [];
+let userMarkers = [];
 let loadTimeout = null;
 let currentLoadingOperation = null;
 let keyboardShortcutsVisible = false;
@@ -1312,6 +1320,8 @@ function updateMapLayers() {
    nodeLayer.clearLayers();
    userLayer.clearLayers();
    zoneLayer.clearLayers();
+   nodeMarkers = [];
+   userMarkers = [];
 
    // Limit markers per layer for performance
    const maxNodes = Math.min(visibleNodes.length, MAX_MARKERS_PER_LAYER);
@@ -1354,15 +1364,18 @@ function updateMapLayers() {
     });
 
     const marker = L.marker([parseFloat(node.lat), parseFloat(node.lng)], { icon: customIcon, nodeId: node.id });
+    nodeMarkers.push(marker);
 
-    // Add permanent label
-    const labelText = (node.name || 'Неизвестный') + '<br>' + formatTimestamp(node.last_seen);
-    marker.bindTooltip(labelText, {
-      permanent: true,
-      direction: 'top',
-      offset: [0, -10],
-      className: 'marker-label'
-    });
+    // Add permanent label if enabled
+    if (currentFilters.showLabels) {
+      const labelText = (node.name || 'Неизвестный') + '<br>' + formatTimestamp(node.last_seen);
+      marker.bindTooltip(labelText, {
+        permanent: true,
+        direction: 'top',
+        offset: [0, -10],
+        className: 'marker-label'
+      });
+    }
 
     marker.bindPopup(
       '<h3 style="color: #333; margin-bottom: 10px; font-size: 1.1em; font-weight: 600;">📡 ' + (node.name || 'Неизвестный узел') + '</h3>' +
@@ -1385,15 +1398,18 @@ function updateMapLayers() {
     });
 
     const marker = L.marker([parseFloat(user.lat), parseFloat(user.lng)], { icon: customIcon });
+    userMarkers.push(marker);
 
-    // Add permanent label
-    const labelText = (user.username || 'Неизвестный') + '<br>' + formatTimestamp(user.last_seen);
-    marker.bindTooltip(labelText, {
-      permanent: true,
-      direction: 'top',
-      offset: [0, -10],
-      className: 'marker-label'
-    });
+    // Add permanent label if enabled
+    if (currentFilters.showLabels) {
+      const labelText = (user.username || 'Неизвестный') + '<br>' + formatTimestamp(user.last_seen);
+      marker.bindTooltip(labelText, {
+        permanent: true,
+        direction: 'top',
+        offset: [0, -10],
+        className: 'marker-label'
+      });
+    }
 
     marker.bindPopup(
       '<h3 style="color: #333; margin-bottom: 10px; font-size: 1.1em; font-weight: 600;">👤 ' + (user.username || 'Неизвестный пользователь') + '</h3>' +
@@ -1719,6 +1735,7 @@ function synchronizeFilterUI() {
 
    // Synchronize route filters
    document.getElementById('showRoutes').checked = currentFilters.showRoutes;
+   document.getElementById('showLabels').checked = currentFilters.showLabels;
    document.querySelector(`input[name="nodeFilter"][value="${currentFilters.nodeFilter}"]`).checked = true;
    document.getElementById('timeFilter').value = currentFilters.timeFilter;
    document.getElementById('selectedNode').value = currentFilters.selectedNode || '';
@@ -1824,8 +1841,7 @@ document.addEventListener('DOMContentLoaded', async function() {
 
   // Disable clustering checkbox event listener
   document.getElementById('disableClustering').addEventListener('change', function() {
-    const disable = this.checked;
-    const zoomLevel = disable ? 0 : 18;
+    const zoomLevel = this.checked ? 18 : 0;
 
     nodeLayer.options.disableClusteringAtZoom = zoomLevel;
     userLayer.options.disableClusteringAtZoom = zoomLevel;
@@ -1834,6 +1850,18 @@ document.addEventListener('DOMContentLoaded', async function() {
     nodeLayer.refreshClusters();
     userLayer.refreshClusters();
     zoneLayer.refreshClusters();
+  });
+
+  // Show labels checkbox event listener
+  document.getElementById('showLabels').addEventListener('change', function() {
+    currentFilters.showLabels = this.checked;
+    if (this.checked) {
+      nodeMarkers.forEach(marker => marker.openTooltip());
+      userMarkers.forEach(marker => marker.openTooltip());
+    } else {
+      nodeMarkers.forEach(marker => marker.closeTooltip());
+      userMarkers.forEach(marker => marker.closeTooltip());
+    }
   });
 
   // Keyboard navigation
