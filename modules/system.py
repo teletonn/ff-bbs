@@ -1,5 +1,8 @@
 # helper functions and init for system related tasks
 # K7MHI Kelly Keeton 2024
+import logging
+logging.basicConfig(level=logging.INFO)
+logging.info("Attempting to import modules in system.py")
 
 import meshtastic.serial_interface #pip install meshtastic or use launch.sh for venv
 import meshtastic.tcp_interface
@@ -550,85 +553,28 @@ def handleSentinelIgnore(nodeInt=1, nodeID=0, aor=False):
         logger.info(f"System: Removed {nodeID} from sentry ignore list")
 
 def messageChunker(message):
+    if len(message) <= MESSAGE_CHUNK_SIZE:
+        return [message]
+
     message_list = []
-    if len(message) > MESSAGE_CHUNK_SIZE:
-        parts = message.split('\n')
-        for part in parts:
-            part = part.strip()
-            # remove empty parts
-            if not part:
-                continue
-            # if part is under the MESSAGE_CHUNK_SIZE, add it to the list
-            if len(part) < MESSAGE_CHUNK_SIZE:
-                message_list.append(part)
-            else:
-                # split the part into chunks
-                current_chunk = ''
-                sentences = []
-                sentence = ''
-                for char in part:
-                    sentence += char
-                    # if char in '.!?':
-                    #     sentences.append(sentence.strip())
-                    #     sentence = ''
-                if sentence:
-                    sentences.append(sentence.strip())
+    while len(message) > 0:
+        if len(message) <= MESSAGE_CHUNK_SIZE:
+            message_list.append(message)
+            break
 
-                for sentence in sentences:
-                    sentence = sentence.replace('  ', ' ')
-                    # remove empty sentences
-                    if not sentence:
-                        continue
-                    # remove junk sentences and append to the previous sentence this may exceed the MESSAGE_CHUNK_SIZE by 3
-                    if len(sentence) < 4:
-                        if current_chunk:
-                            current_chunk += sentence
-                        else:
-                            current_chunk = sentence
-                        continue
+        # Find the last space within the chunk size
+        split_pos = message.rfind(' ', 0, MESSAGE_CHUNK_SIZE)
+        
+        if split_pos == -1:
+            # No space found, split at the chunk size
+            split_pos = MESSAGE_CHUNK_SIZE
+        
+        chunk = message[:split_pos]
+        message_list.append(chunk)
+        message = message[split_pos:].lstrip()
 
-                    # if sentence is too long, split it by words
-                    if len(current_chunk) + len(sentence) > MESSAGE_CHUNK_SIZE:
-                        if current_chunk:
-                            message_list.append(current_chunk)
-                        current_chunk = sentence
-                    else:
-                        if current_chunk:
-                            current_chunk += ' ' + sentence
-                        else:
-                            current_chunk = sentence
-                if current_chunk:
-                    message_list.append(current_chunk)
-
-        # Consolidate any adjacent messages that can fit in a single chunk.
-        idx = 0
-        while idx < len(message_list) - 1:
-            if len(message_list[idx]) + len(message_list[idx+1]) < MESSAGE_CHUNK_SIZE:
-                message_list[idx] += '\n' + message_list[idx+1]
-                del message_list[idx+1]
-            else:
-                idx += 1
-
-        # Ensure no chunk exceeds MESSAGE_CHUNK_SIZE
-        final_message_list = []
-        for chunk in message_list:
-            while len(chunk) > MESSAGE_CHUNK_SIZE:
-                # Find the last space within the chunk size limit
-                split_index = chunk.rfind(' ', 0, MESSAGE_CHUNK_SIZE)
-                if split_index == -1:
-                    split_index = MESSAGE_CHUNK_SIZE
-                final_message_list.append(chunk[:split_index])
-                chunk = chunk[split_index:].strip()
-            if chunk:
-                final_message_list.append(chunk)
-
-        # Calculate the total length of the message
-        total_length = sum(len(chunk) for chunk in final_message_list)
-        num_chunks = len(final_message_list)
-        logger.debug(f"System: Splitting #chunks: {num_chunks}, Total length: {total_length}")
-        return final_message_list
-
-    return message
+    logger.debug(f"System: Splitting #chunks: {len(message_list)}, Total length: {sum(len(c) for c in message_list)}")
+    return message_list
         
 def send_message(message, ch, nodeid=0, nodeInt=1, bypassChuncking=False, resend_existing=False, existing_message_id=None):
     # Send a message to a channel or DM with retry logic and offline saving
@@ -707,40 +653,29 @@ def send_message(message, ch, nodeid=0, nodeInt=1, bypassChuncking=False, resend
             else:
                 message_list = [message]
 
-            if isinstance(message_list, list):
-                # Send the message to the channel or DM
-                total_length = sum(len(chunk) for chunk in message_list)
-                num_chunks = len(message_list)
-                for m in message_list:
-                    chunkOf = f"{message_list.index(m)+1}/{num_chunks}"
-                    if nodeid == 0:
-                        # Send to channel - always use ACK for delivery confirmation
-                        logger.info(f"Device:{nodeInt} Channel:{ch} Attempt:{current_attempt_count} " + CustomFormatter.red + f"req.ACK " + f"Chunker{chunkOf} SendingChannel: " + CustomFormatter.white + m.replace('\n', ' '))
-                        interface.sendText(text=m, channelIndex=ch, wantAck=True)
-                    else:
-                        # Send to DM - always use ACK for delivery confirmation
-                        logger.info(f"Device:{nodeInt} Attempt:{current_attempt_count} " + CustomFormatter.red + f"req.ACK " + f"Chunker{chunkOf} Sending DM: " + CustomFormatter.white + m.replace('\n', ' ') + CustomFormatter.purple +\
-                                  " To: " + CustomFormatter.white + f"{get_name_from_number(nodeid, 'long', nodeInt)}")
-                        interface.sendText(text=m, channelIndex=ch, destinationId=nodeid, wantAck=True)
-
-                    # Throttle the message sending to prevent spamming the device
-                    if (message_list.index(m)+1) % 4 == 0:
-                        time.sleep(responseDelay + 1)
-                        if (message_list.index(m)+1) % 5 == 0:
-                            logger.warning(f"System: throttling rate Interface{nodeInt} on {chunkOf}")
-
-                    # wait an amount of time between sending each split message
-                    time.sleep(splitDelay)
-            else: # message is less than MESSAGE_CHUNK_SIZE characters
+            # Send the message to the channel or DM
+            total_length = sum(len(chunk) for chunk in message_list)
+            num_chunks = len(message_list)
+            for m in message_list:
+                chunkOf = f"{message_list.index(m)+1}/{num_chunks}"
                 if nodeid == 0:
                     # Send to channel - always use ACK for delivery confirmation
-                    logger.info(f"Device:{nodeInt} Channel:{ch} Attempt:{current_attempt_count} " + CustomFormatter.red + "req.ACK " + "SendingChannel: " + CustomFormatter.white + message.replace('\n', ' '))
-                    interface.sendText(text=message, channelIndex=ch, wantAck=True)
+                    logger.info(f"Device:{nodeInt} Channel:{ch} Attempt:{current_attempt_count} " + CustomFormatter.red + f"req.ACK " + f"Chunker{chunkOf} SendingChannel: " + CustomFormatter.white + m.replace('\n', ' '))
+                    interface.sendText(text=m, channelIndex=ch, wantAck=True)
                 else:
                     # Send to DM - always use ACK for delivery confirmation
-                    logger.info(f"Device:{nodeInt} Attempt:{current_attempt_count} " + CustomFormatter.red + "req.ACK " + "Sending DM: " + CustomFormatter.white + message.replace('\n', ' ') + CustomFormatter.purple +\
-                              " To: " + CustomFormatter.white + f"{get_name_from_number(nodeid, 'long', nodeInt)}")
-                    interface.sendText(text=message, channelIndex=ch, destinationId=nodeid, wantAck=True)
+                    logger.info(f"Device:{nodeInt} Attempt:{current_attempt_count} " + CustomFormatter.red + f"req.ACK " + f"Chunker{chunkOf} Sending DM: " + CustomFormatter.white + m.replace('\n', ' ') + CustomFormatter.purple +\
+                                  " To: " + CustomFormatter.white + f"{get_name_from_number(nodeid, 'long', nodeInt)}")
+                    interface.sendText(text=m, channelIndex=ch, destinationId=nodeid, wantAck=True)
+
+                # Throttle the message sending to prevent spamming the device
+                if (message_list.index(m)+1) % 4 == 0:
+                    time.sleep(responseDelay + 1)
+                    if (message_list.index(m)+1) % 5 == 0:
+                        logger.warning(f"System: throttling rate Interface{nodeInt} on {chunkOf}")
+
+                # wait an amount of time between sending each split message
+                time.sleep(splitDelay)
 
             # If we reach here without exception, assume success
             update_message_delivery_status(message_id, delivered=True, status='delivered')
