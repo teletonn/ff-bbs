@@ -55,11 +55,11 @@ def where_am_i(lat=0, lon=0, short=False, zip=False):
             location = geolocator.reverse(lat + ", " + lon)
             address = location.raw['address']
             address_components = {
-                'city': 'г.',
-                'county': 'O-г',
-                'road': 'Ул.',
-                'house_number': 'Д.',
-                'postcode': 'И.'
+                'city': 'Г',
+                'county': 'O',
+                'road': 'У',
+                'house_number': 'Д',
+                'postcode': 'И'
             }
             whereIam += ', '.join([f"{label}: {address.get(component, '')}" for component, label in address_components.items() if component in address])
             #whereIam += f", Код: " + grid
