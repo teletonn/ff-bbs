@@ -18,6 +18,9 @@
   box-shadow: 0 1px 3px rgba(0,0,0,0.3);
   white-space: nowrap;
 }
+.labels-hidden .marker-label {
+  display: none;
+}
 .custom-marker {
   border: none !important;
   background: none !important;
@@ -603,6 +606,10 @@ textarea:focus {
         <button id="toggleRoutes" style="padding: 4px 8px; border: 1px solid #ccc; border-radius: 3px; background: #dc3545; color: white; cursor: pointer;" aria-label="Переключить отображение маршрутов" title="Переключить отображение маршрутов (R)">Маршруты ✗</button>
         <span class="tooltip-text">Переключить отображение маршрутов</span>
       </div>
+     <label style="display: flex; align-items: center; gap: 3px;">
+       <input type="checkbox" id="toggle-labels-checkbox" checked style="margin: 0;">
+       <span>Метки</span>
+     </label>
     </div>
 
     <div style="display: flex; gap: 10px; align-items: center;">
@@ -1838,6 +1845,15 @@ document.addEventListener('DOMContentLoaded', async function() {
 
   // Keyboard navigation
   document.addEventListener('keydown', handleKeyboardShortcuts);
+
+ document.getElementById('toggle-labels-checkbox').addEventListener('change', function() {
+   const mapContainer = document.getElementById('map-container');
+   if (this.checked) {
+     mapContainer.classList.remove('labels-hidden');
+   } else {
+     mapContainer.classList.add('labels-hidden');
+   }
+ });
 
   // Initial layer visibility update
   updateLayerVisibility();
