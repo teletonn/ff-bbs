@@ -56,9 +56,10 @@ def where_am_i(lat=0, lon=0, short=False, zip=False):
             address = location.raw['address']
             address_components = {
                 'city': 'г.',
-                'road': 'ул.',
-                'house_number': 'д.',
-                'postcode': ''
+                'county': 'O-г',
+                'road': 'Ул.',
+                'house_number': 'Д.',
+                'postcode': 'И.'
             }
             whereIam += ', '.join([f"{label}: {address.get(component, '')}" for component, label in address_components.items() if component in address])
             #whereIam += f", Код: " + grid
