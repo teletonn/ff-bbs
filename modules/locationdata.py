@@ -44,27 +44,27 @@ def where_am_i(lat=0, lon=0, short=False, zip=False):
             location = geolocator.reverse(str(lat) + ", " + str(lon))
             address = location.raw['address']
             address_components = {
-                'city': 'Город',
-                'state': 'Штат',
-                'postcode': 'Индекс',
-                'county': 'Округ',
-                'country': 'Страна'
+                'city': 'г.',
+                'state': 'Ре-н',
+                'postcode': 'Ин-с',
+                'county': 'Ок-г',
+                'country': 'Ст-а'
             }
             whereIam += ', '.join([f"{label}: {address.get(component, '')}" for component, label in address_components.items() if component in address])
         else:
             location = geolocator.reverse(lat + ", " + lon)
             address = location.raw['address']
             address_components = {
-                'house_number': 'Номер',
-                'road': 'Дорога',
-                'city': 'Город',
-                'state': 'Штат',
-                'postcode': 'Индекс',
-                'county': 'Округ',
-                'country': 'Страна'
+                'house_number': 'д.',
+                'road': 'ул.',
+                'city': 'г.',
+                'state': 'Ре-н',
+                'postcode': 'Ин-с',
+                'county': 'Ок-г',
+                'country': 'Ст-а'
             }
             whereIam += ', '.join([f"{label}: {address.get(component, '')}" for component, label in address_components.items() if component in address])
-            whereIam += f", Сетка: " + grid
+            #whereIam += f", Код: " + grid
         return whereIam
     except Exception as e:
         logger.debug("Location:Error fetching location data with whereami, likely network error")
@@ -867,7 +867,7 @@ def distance(lat=0,lon=0,nodeID=0, reset=False):
         initial_bearing = math.atan2(x, y)
         initial_bearing = math.degrees(initial_bearing)
         compass_bearing = (initial_bearing + 360) % 360
-        msg += f" 🧭{compass_bearing:.2f}° Bearing from last📍"
+        msg += f" 🧭{compass_bearing:.2f}° от пред📍"
 
         # calculate the speed if time difference is more than 1 minute
         time_diff = datetime.now() - last_point['time']
@@ -879,7 +879,7 @@ def distance(lat=0,lon=0,nodeID=0, reset=False):
             else:
                 speed_mph = (distance_km * 0.621371) / hours
                 speed_str = f"{speed_mph:.2f} mph"
-            msg += f", travel time: {int(time_diff.total_seconds()//60)} min, Speed: {speed_str}"
+            msg += f", в пути: {int(time_diff.total_seconds()//60)} м, С: {speed_str}"
 
         # calculate total distance traveled including this point computed in distance_km from calculate distance from last point in howfarDB
         total_distance_km = 0.0
@@ -898,7 +898,7 @@ def distance(lat=0,lon=0,nodeID=0, reset=False):
         # add the distance from last point to current point
         total_distance_km += distance_km
         if use_metric:
-            msg += f", Total: {total_distance_km:.2f} km"
+            msg += f", Итого: {total_distance_km:.2f} km"
         else:
             total_distance_miles = total_distance_km * 0.621371
             msg += f", Total: {total_distance_miles:.2f} miles"
@@ -931,7 +931,7 @@ def distance(lat=0,lon=0,nodeID=0, reset=False):
             area = abs(area) / 1e6 # convert to square kilometers
 
             if use_metric:
-                msg += f", Area: {area:.2f} sq.km (approx)"
+                msg += f", Пл: {area:.2f} кв.km (пр-но)"
             else:
                 area_miles = area * 0.386102
                 msg += f", Area: {area_miles:.2f} sq.mi (approx)"
@@ -955,7 +955,7 @@ def distance(lat=0,lon=0,nodeID=0, reset=False):
             lat_centroid = math.atan2(z, hyp)
             lat_centroid = math.degrees(lat_centroid)
             lon_centroid = math.degrees(lon_centroid)
-            msg += f", Centroid: {lat_centroid:.5f}, {lon_centroid:.5f}"
+            msg += f", Центр: {lat_centroid:.5f}, {lon_centroid:.5f}"
 
         return msg
 

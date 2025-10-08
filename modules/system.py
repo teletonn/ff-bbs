@@ -461,7 +461,7 @@ def is_node_online(node_id, nodeInt=1, use_ping=False):
             if node['num'] == node_id:
                 last_heard = node.get('lastHeard', 0)
                 # Check if last heard within 2 hours (7200 seconds)
-                if last_heard and (time.time() - last_heard) <= 7200:
+                if last_heard and (time.time() - last_heard) <= 1800:
                     return True
                 elif use_ping:
                     # Attempt ping if available and last heard check failed
