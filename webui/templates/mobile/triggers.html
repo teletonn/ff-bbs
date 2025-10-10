@@ -1,0 +1,392 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="content-block">
+  <h2>Триггеры</h2>
+  <button id="createTriggerBtn" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; margin-bottom: 20px;">Добавить Новый Триггер</button>
+
+  <div id="loading" style="text-align: center; margin: 20px;">Загрузка триггеров...</div>
+  <div id="triggers-cards" style="display: none;"></div>
+  <div id="no-triggers" style="display: none; text-align: center; margin: 20px;">Триггеры недоступны</div>
+  <div id="error" style="display: none; color: red; margin-top: 10px;">Ошибка загрузки триггеров</div>
+</div>
+
+<!-- Modal for Add/Edit Trigger -->
+<div class="modal" id="triggerModal">
+  <div class="modal-content">
+    <span class="close" onclick="closeModal()">&times;</span>
+    <h5 id="modalTitle">Добавить Триггер</h5>
+    <form id="triggerForm">
+      <input type="hidden" id="triggerId" value="">
+      <div class="mb-3">
+        <label for="geofence_id" class="form-label">Геозона</label>
+        <select class="form-select" id="geofence_id" required>
+          <option value="">Выберите Геозону</option>
+        </select>
+      </div>
+      <div class="mb-3">
+        <label for="action" class="form-label">Действие</label>
+        <select class="form-select" id="action" required>
+          <option value="enter">Вход</option>
+          <option value="exit">Выход</option>
+        </select>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Варианты уведомлений</label>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="notification" id="notify_channel" value="channel" checked>
+          <label class="form-check-label" for="notify_channel">
+            Отправить в канал
+          </label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="notification" id="notify_node" value="node">
+          <label class="form-check-label" for="notify_node">
+            Отправить конкретному узлу через ЛС
+          </label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="notification" id="notify_group" value="group">
+          <label class="form-check-label" for="notify_group">
+            Отправить пользователям группы через ЛС каждому пользователю
+          </label>
+        </div>
+      </div>
+      <div class="mb-3 recipient-container" id="channel_recipient" style="display: block;">
+        <label for="channel_select" class="form-label">Канал</label>
+        <select class="form-select" id="channel_select" required>
+          <option value="">Выберите канал</option>
+        </select>
+      </div>
+      <div class="mb-3 recipient-container" id="node_recipient" style="display: none;">
+        <label for="node_select" class="form-label">Пользователь</label>
+        <select class="form-select" id="node_select" required>
+          <option value="">Выберите пользователя</option>
+        </select>
+      </div>
+      <div class="mb-3 recipient-container" id="group_recipient" style="display: none;">
+        <label for="group_select" class="form-label">Группа</label>
+        <select class="form-select" id="group_select" required>
+          <option value="">Выберите группу</option>
+        </select>
+      </div>
+      <div class="mb-3 form-check">
+        <input type="checkbox" class="form-check-input" id="active" checked>
+        <label class="form-check-label" for="active">Активен</label>
+      </div>
+    </form>
+    <div style="text-align: right; margin-top: 20px;">
+      <button type="button" class="btn btn-secondary" onclick="closeModal()">Отмена</button>
+      <button type="button" class="btn btn-primary" onclick="saveTrigger()">Отправить</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let editingId = null;
+let triggers = {{ triggers | tojson | safe }};
+let geofences = [];
+
+function loadZones() {
+  fetch('/api/v1/zones')
+  .then(res => res.json())
+  .then(data => {
+    geofences = data;
+    populateGeofenceSelect();
+    loadTriggers();
+  })
+  .catch(err => console.error('Error loading zones:', err));
+}
+
+function loadUsers() {
+  fetch('/api/v1/users')
+  .then(res => res.json())
+  .then(data => {
+    populateUserSelect(data);
+  })
+  .catch(err => console.error('Error loading users:', err));
+}
+
+function loadGroups() {
+  fetch('/api/v1/groups')
+  .then(res => res.json())
+  .then(data => {
+    populateGroupSelect(data);
+  })
+  .catch(err => console.error('Error loading groups:', err));
+}
+
+function loadChannels() {
+  fetch('/api/v1/channels')
+  .then(res => res.json())
+  .then(data => {
+    populateChannelSelect(data);
+  })
+  .catch(err => console.error('Error loading channels:', err));
+}
+
+function populateGeofenceSelect() {
+  const select = document.getElementById('geofence_id');
+  select.innerHTML = '<option value="">Выберите Геозону</option>';
+  geofences.forEach(g => {
+    const option = document.createElement('option');
+    option.value = g.id;
+    option.textContent = g.name;
+    select.appendChild(option);
+  });
+}
+
+function populateUserSelect(users) {
+  const select = document.getElementById('node_select');
+  select.innerHTML = '<option value="">Выберите пользователя</option>';
+  users.forEach(u => {
+    const option = document.createElement('option');
+    option.value = u.id;
+    option.textContent = u.username;
+    select.appendChild(option);
+  });
+}
+
+function populateGroupSelect(groups) {
+  const select = document.getElementById('group_select');
+  select.innerHTML = '<option value="">Выберите группу</option>';
+  groups.forEach(g => {
+    const option = document.createElement('option');
+    option.value = g.id;
+    option.textContent = g.name;
+    select.appendChild(option);
+  });
+}
+
+function populateChannelSelect(channels) {
+  const select = document.getElementById('channel_select');
+  select.innerHTML = '<option value="">Выберите канал</option>';
+  channels.forEach(c => {
+    const option = document.createElement('option');
+    option.value = c;
+    option.textContent = c;
+    select.appendChild(option);
+  });
+}
+
+function loadTriggers() {
+  document.getElementById('loading').style.display = 'block';
+  document.getElementById('triggers-cards').style.display = 'none';
+  document.getElementById('no-triggers').style.display = 'none';
+  document.getElementById('error').style.display = 'none';
+
+  fetch('/api/v1/triggers')
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}: Не удалось загрузить триггеры`);
+      return res.json();
+    })
+    .then(data => {
+      triggers = data;
+      const container = document.getElementById('triggers-cards');
+      container.innerHTML = '';
+      if (data.length === 0) {
+        document.getElementById('no-triggers').style.display = 'block';
+      } else {
+        data.forEach(trigger => {
+          const card = document.createElement('div');
+          card.className = 'node-card';
+
+          const geofence = geofences.find(g => g.id == trigger.zone_id);
+          const geofenceName = geofence ? geofence.name : 'Неизвестно';
+          const params = JSON.parse(trigger.action_payload || '{}');
+          const notification = params.notification || 'channel';
+          let notificationText = '';
+          if (notification === 'channel') {
+            notificationText = 'Канал';
+          } else if (notification === 'node') {
+            notificationText = 'Пользователь';
+          } else if (notification === 'group') {
+            notificationText = 'Группа';
+          }
+          const statusClass = trigger.active ? 'status-online' : 'status-offline';
+          const statusText = trigger.active ? 'Активен' : 'Неактивен';
+
+          card.innerHTML = `
+            <div class="node-card-header">
+              <div class="node-name">ID: ${trigger.id} - ${geofenceName}</div>
+              <div class="node-status ${statusClass}">${statusText}</div>
+            </div>
+            <div class="node-details">
+              <div class="node-detail">
+                <span class="node-detail-label">Действие:</span>
+                <span class="node-detail-value">${trigger.event_type}</span>
+              </div>
+              <div class="node-detail">
+                <span class="node-detail-label">Уведомление:</span>
+                <span class="node-detail-value">${notificationText}</span>
+              </div>
+              <div class="node-detail">
+                <span class="node-detail-label">Параметры:</span>
+                <span class="node-detail-value">${JSON.stringify(params)}</span>
+              </div>
+            </div>
+            <div style="margin-top: 15px; display: flex; flex-direction: column; gap: 10px;">
+              <button onclick="event.stopPropagation(); openEditModal(${trigger.id})" style="padding: 8px; background: #ffc107; color: white; border: none; border-radius: 4px;">Редактировать</button>
+              <button onclick="event.stopPropagation(); toggleActive(${trigger.id}, ${!trigger.active})" style="padding: 8px; background: ${trigger.active ? '#ffc107' : '#28a745'}; color: white; border: none; border-radius: 4px;">${trigger.active ? 'Деактивировать' : 'Активировать'}</button>
+              <button onclick="event.stopPropagation(); deleteTrigger(${trigger.id})" style="padding: 8px; background: #dc3545; color: white; border: none; border-radius: 4px;">Удалить</button>
+            </div>
+          `;
+
+          container.appendChild(card);
+        });
+        document.getElementById('triggers-cards').style.display = 'block';
+      }
+      document.getElementById('loading').style.display = 'none';
+    })
+    .catch(err => {
+      console.error('Ошибка загрузки триггеров:', err);
+      document.getElementById('error').textContent = 'Ошибка загрузки триггеров: ' + err.message;
+      document.getElementById('error').style.display = 'block';
+      document.getElementById('loading').style.display = 'none';
+    });
+}
+
+function openAddModal() {
+  document.getElementById('modalTitle').textContent = 'Добавить Триггер';
+  document.getElementById('triggerForm').reset();
+  document.getElementById('triggerId').value = '';
+  document.getElementById('action').value = 'enter';
+  document.getElementById('notify_channel').checked = true;
+  document.getElementById('active').checked = true;
+  editingId = null;
+  updateRecipientVisibility();
+  document.getElementById('triggerModal').style.display = 'block';
+}
+
+function openEditModal(id) {
+  const trigger = triggers.find(t => t.id == id);
+  if (!trigger) return;
+  document.getElementById('modalTitle').textContent = 'Редактировать Триггер';
+  document.getElementById('triggerId').value = id;
+  document.getElementById('geofence_id').value = trigger.zone_id;
+  document.getElementById('action').value = trigger.event_type;
+  const params = JSON.parse(trigger.action_payload || '{}');
+  const notification = params.notification || 'channel';
+  document.querySelector(`input[name="notification"][value="${notification}"]`).checked = true;
+  // Set recipient value
+  if (notification === 'channel') {
+    document.getElementById('channel_select').value = params.recipient || '';
+  } else if (notification === 'node') {
+    document.getElementById('node_select').value = params.recipient || '';
+  } else if (notification === 'group') {
+    document.getElementById('group_select').value = params.recipient || '';
+  }
+  document.getElementById('active').checked = trigger.active;
+  editingId = id;
+  updateRecipientVisibility();
+  document.getElementById('triggerModal').style.display = 'block';
+}
+
+function updateRecipientVisibility() {
+  const notification = document.querySelector('input[name="notification"]:checked').value;
+  document.getElementById('channel_recipient').style.display = notification === 'channel' ? 'block' : 'none';
+  document.getElementById('node_recipient').style.display = notification === 'node' ? 'block' : 'none';
+  document.getElementById('group_recipient').style.display = notification === 'group' ? 'block' : 'none';
+}
+
+function saveTrigger() {
+  const id = document.getElementById('triggerId').value;
+  const notification = document.querySelector('input[name="notification"]:checked').value;
+  let recipient = '';
+  if (notification === 'channel') {
+    recipient = document.getElementById('channel_select').value;
+  } else if (notification === 'node') {
+    recipient = document.getElementById('node_select').value;
+  } else if (notification === 'group') {
+    recipient = document.getElementById('group_select').value;
+  }
+  const action_payload = JSON.stringify({ notification, recipient });
+  const data = {
+    zone_id: parseInt(document.getElementById('geofence_id').value),
+    event_type: document.getElementById('action').value,
+    action_type: notification,
+    action_payload: action_payload,
+    active: document.getElementById('active').checked ? 1 : 0
+  };
+  if (!data.zone_id || !data.event_type || !recipient) {
+    alert('Пожалуйста, заполните все обязательные поля');
+    return;
+  }
+  const url = id ? `/api/v1/triggers/${id}` : '/api/v1/triggers';
+  const method = id ? 'PUT' : 'POST';
+  fetch(url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data)
+  })
+  .then(res => {
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  })
+  .then(result => {
+    loadTriggers();
+    closeModal();
+    alert('Триггер сохранен успешно');
+  })
+  .catch(err => {
+    console.error(err);
+    alert('Ошибка сохранения триггера: ' + err.message);
+  });
+}
+
+function toggleActive(id, active) {
+  fetch(`/api/v1/triggers/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ active: active ? 1 : 0 })
+  })
+  .then(res => {
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  })
+  .then(() => {
+    loadTriggers();
+  })
+  .catch(err => {
+    console.error(err);
+    alert('Ошибка обновления статуса активности');
+  });
+}
+
+function deleteTrigger(id) {
+  if (!confirm('Вы уверены?')) return;
+  fetch(`/api/v1/triggers/${id}`, { method: 'DELETE' })
+  .then(res => {
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  })
+  .then(() => {
+    loadTriggers();
+    alert('Триггер удален');
+  })
+  .catch(err => {
+    console.error(err);
+    alert('Ошибка удаления триггера: ' + err.message);
+  });
+}
+
+function closeModal() {
+  document.getElementById('triggerModal').style.display = 'none';
+}
+
+// Initial load
+document.addEventListener('DOMContentLoaded', function() {
+  loadZones();
+  loadUsers();
+  loadGroups();
+  loadChannels();
+
+  document.getElementById('createTriggerBtn').onclick = openAddModal;
+
+  // Add event listeners for notification type change
+  document.querySelectorAll('input[name="notification"]').forEach(radio => {
+    radio.addEventListener('change', updateRecipientVisibility);
+  });
+});
+</script>
+{% endblock %}

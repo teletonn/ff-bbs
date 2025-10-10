@@ -24,7 +24,30 @@
             </ul>
         </nav>
     </aside>
- 
+
+    <!-- Hamburger Menu Button -->
+    <button id="hamburger-menu" class="hamburger-menu" aria-label="Open navigation menu">
+      <span class="hamburger-line"></span>
+      <span class="hamburger-line"></span>
+      <span class="hamburger-line"></span>
+    </button>
+
+    <!-- Mobile Navigation Overlay -->
+    <div id="mobile-nav-overlay" class="mobile-nav-overlay">
+      <div class="mobile-nav-content">
+        <button id="close-nav" class="close-nav">&times;</button>
+        <nav class="mobile-nav-menu">
+          <ul>
+            {% for name, path in menu_items %}
+            <li>
+              <a href="{{ path }}" class="{% if request.url.path == path %}active{% endif %}">{{ name }}</a>
+            </li>
+            {% endfor %}
+          </ul>
+        </nav>
+      </div>
+    </div>
+
     <main class="main-content">
         <header class="content-header">
             <h2>{{ page_title }}</h2>
@@ -81,5 +104,27 @@ console.log('Global functions showSuccess and showError defined');
 </script>
 
 {% block scripts %}{% endblock %}
+
+<script>
+// Mobile detection and loading
+(function() {
+    function isMobile() {
+        return window.innerWidth < 768 || /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    }
+
+    if (isMobile()) {
+        // Load mobile CSS
+        const mobileCSS = document.createElement('link');
+        mobileCSS.rel = 'stylesheet';
+        mobileCSS.href = '{{ url_for("static", path="/css/mobile.css") }}';
+        document.head.appendChild(mobileCSS);
+
+        // Load mobile JS
+        const mobileJS = document.createElement('script');
+        mobileJS.src = '{{ url_for("static", path="/js/mobile.js") }}';
+        document.body.appendChild(mobileJS);
+    }
+})();
+</script>
 </body>
 </html>

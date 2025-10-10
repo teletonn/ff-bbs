@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Modal for creating/editing process -->
+<div id="editModal" class="modal">
+  <div class="modal-content">
+    <span id="closeEditModal" style="color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer;">&times;</span>
+    <h2 id="modalTitle">Создать автоматизированный процесс</h2>
+    <form id="editForm">
+      <input type="hidden" id="editProcessId" name="id">
+      <div style="margin-bottom: 15px;">
+        <label for="editName">Имя:</label>
+        <input type="text" id="editName" name="name" required style="width: 100%; padding: 8px; box-sizing: border-box;">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="editCommand">Команда:</label>
+        <textarea id="editCommand" name="command" required placeholder="system_status" style="width: 100%; padding: 8px; box-sizing: border-box; height: 60px; font-family: monospace;"></textarea>
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="editSchedule">Расписание (формат cron):</label>
+        <input type="text" id="editSchedule" name="schedule" required placeholder="*/5 * * * *" style="width: 100%; padding: 8px; box-sizing: border-box;">
+        <small style="color: #666;">Примеры: "*/5 * * * *" (каждые 5 мин), "0 */1 * * *" (ежечасно), "0 0 * * *" (ежедневно)</small>
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label>
+          <input type="checkbox" id="editEnabled" name="enabled" checked> Включено
+        </label>
+      </div>
+      <button type="submit" style="width: 100%; padding: 10px; background: #007bff; color: white; border: none; border-radius: 4px;">Сохранить</button>
+    </form>
+  </div>
+</div>
+
+<!-- Processes Management Section -->
+<div class="content-block">
+  <h2>Автоматизированные процессы</h2>
+  <button id="createProcessBtn" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; margin-bottom: 20px;">Создать процесс</button>
+
+  <div id="loading" style="text-align: center; margin: 20px;">Загрузка процессов...</div>
+  <div id="processes-cards" style="display: none;"></div>
+  <div id="no-processes" style="display: none; text-align: center; margin: 20px;">Процессы недоступны</div>
+  <div id="error" style="display: none; color: red; margin-top: 10px;">Ошибка загрузки процессов</div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  // Modal elements
+  const editModal = document.getElementById('editModal');
+  const closeEditModal = document.getElementById('closeEditModal');
+  const editForm = document.getElementById('editForm');
+
+  // Modal event listeners
+  closeEditModal.onclick = () => editModal.style.display = 'none';
+  window.onclick = function(event) {
+    if (event.target == editModal) editModal.style.display = 'none';
+  }
+
+  // Form submission
+  editForm.onsubmit = function(e) {
+    e.preventDefault();
+    const processId = document.getElementById('editProcessId').value;
+    const formData = new FormData(editForm);
+    const data = {
+      name: formData.get('name'),
+      command: formData.get('command'),
+      schedule: formData.get('schedule'),
+      enabled: document.getElementById('editEnabled').checked
+    };
+
+    const method = processId ? 'PUT' : 'POST';
+    const url = processId ? `/api/v1/processes/${processId}` : '/api/v1/processes';
+
+    fetch(url, {
+      method: method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    })
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    })
+    .then(result => {
+      if (result.success || result.id) {
+        alert(processId ? 'Процесс обновлен успешно' : 'Процесс создан успешно');
+        editModal.style.display = 'none';
+        loadProcesses();
+      } else {
+        alert('Операция не удалась');
+      }
+    })
+    .catch(err => {
+      alert('Ошибка: ' + err.message);
+    });
+  };
+
+  // Create process button
+  document.getElementById('createProcessBtn').onclick = () => showEditModal();
+
+  function loadProcesses() {
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('processes-cards').style.display = 'none';
+    document.getElementById('no-processes').style.display = 'none';
+    document.getElementById('error').style.display = 'none';
+
+    fetch('/api/v1/processes')
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}: Не удалось загрузить процессы`);
+        return res.json();
+      })
+      .then(data => {
+        const container = document.getElementById('processes-cards');
+        container.innerHTML = '';
+        if (data.length === 0) {
+          document.getElementById('no-processes').style.display = 'block';
+        } else {
+          data.forEach(process => {
+            const card = document.createElement('div');
+            card.className = 'node-card';
+            card.onclick = () => showEditModal(process);
+
+            const statusClass = process.enabled ? 'status-online' : 'status-offline';
+            const statusText = process.enabled ? 'Включен' : 'Отключен';
+
+            card.innerHTML = `
+              <div class="node-card-header">
+                <div class="node-name">${process.name || 'N/A'}</div>
+                <div class="node-status ${statusClass}">${statusText}</div>
+              </div>
+              <div class="node-details">
+                <div class="node-detail">
+                  <span class="node-detail-label">Команда:</span>
+                  <span class="node-detail-value">${process.command || 'N/A'}</span>
+                </div>
+                <div class="node-detail">
+                  <span class="node-detail-label">Расписание:</span>
+                  <span class="node-detail-value">${process.schedule || 'N/A'}</span>
+                </div>
+                <div class="node-detail">
+                  <span class="node-detail-label">Запусков:</span>
+                  <span class="node-detail-value">${process.run_count || 0}</span>
+                </div>
+                <div class="node-detail">
+                  <span class="node-detail-label">Последний запуск:</span>
+                  <span class="node-detail-value">${process.last_run || 'Никогда'}</span>
+                </div>
+              </div>
+              <div style="margin-top: 15px; display: flex; flex-direction: column; gap: 10px;">
+                <button onclick="event.stopPropagation(); showEditModal(${JSON.stringify(process).replace(/"/g, '"')})" style="padding: 8px; background: #007bff; color: white; border: none; border-radius: 4px;">Редактировать</button>
+                <button onclick="event.stopPropagation(); toggleProcess(${process.id}, ${!process.enabled})" style="padding: 8px; background: ${process.enabled ? '#ffc107' : '#28a745'}; color: white; border: none; border-radius: 4px;">${process.enabled ? 'Отключить' : 'Включить'}</button>
+                <button onclick="event.stopPropagation(); runProcess(${process.id})" style="padding: 8px; background: #17a2b8; color: white; border: none; border-radius: 4px;">Запустить сейчас</button>
+                <button onclick="event.stopPropagation(); deleteProcess(${process.id})" style="padding: 8px; background: #dc3545; color: white; border: none; border-radius: 4px;">Удалить</button>
+              </div>
+            `;
+
+            container.appendChild(card);
+          });
+          document.getElementById('processes-cards').style.display = 'block';
+        }
+        document.getElementById('loading').style.display = 'none';
+      })
+      .catch(err => {
+        console.error('Ошибка загрузки процессов:', err);
+        document.getElementById('error').textContent = 'Ошибка загрузки процессов: ' + err.message;
+        document.getElementById('error').style.display = 'block';
+        document.getElementById('loading').style.display = 'none';
+      });
+  }
+
+  function showEditModal(process = null) {
+    document.getElementById('editProcessId').value = process ? process.id : '';
+    document.getElementById('editName').value = process ? process.name || '' : '';
+    document.getElementById('editCommand').value = process ? process.command || '' : '';
+    document.getElementById('editSchedule').value = process ? process.schedule || '' : '';
+    document.getElementById('editEnabled').checked = process ? process.enabled : true;
+    document.getElementById('modalTitle').textContent = process ? 'Редактировать процесс' : 'Создать процесс';
+    editModal.style.display = 'block';
+  }
+
+  function toggleProcess(processId, enabled) {
+    fetch(`/api/v1/processes/${processId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: enabled })
+    })
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    })
+    .then(result => {
+      if (result.success) {
+        alert(`Процесс ${enabled ? 'включен' : 'отключен'} успешно`);
+        loadProcesses();
+      } else {
+        alert('Переключение не удалось');
+      }
+    })
+    .catch(err => {
+      alert('Ошибка: ' + err.message);
+    });
+  }
+
+  function runProcess(processId) {
+    if (!confirm('Запустить этот процесс сейчас?')) return;
+    // Note: This would typically trigger the process execution
+    // For now, we'll just show a message
+    alert('Здесь будет запущено выполнение процесса. Это требует интеграции с планировщиком бэкенда.');
+  }
+
+  function deleteProcess(processId) {
+    if (!confirm('Вы уверены, что хотите удалить этот процесс?')) return;
+    fetch(`/api/v1/processes/${processId}`, { method: 'DELETE' })
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then(result => {
+        if (result.success) {
+          alert('Процесс удален успешно');
+          loadProcesses();
+        } else {
+          alert('Удаление не удалось');
+        }
+      })
+      .catch(err => {
+        alert('Ошибка: ' + err.message);
+      });
+  }
+
+  // Initial load
+  loadProcesses();
+});
+</script>
+{% endblock %}

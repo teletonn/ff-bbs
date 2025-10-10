@@ -1,0 +1,214 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Modal for creating/editing alert config -->
+<div id="editModal" class="modal">
+  <div class="modal-content">
+    <span id="closeEditModal" style="color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer;">&times;</span>
+    <h2 id="modalTitle">Создать конфигурацию оповещения</h2>
+    <form id="editForm">
+      <input type="hidden" id="editConfigId" name="id">
+      <div style="margin-bottom: 15px;">
+        <label for="editType">Тип оповещения:</label>
+        <select id="editType" name="type" required style="width: 100%; padding: 8px; box-sizing: border-box;">
+          <option value="system">Система</option>
+          <option value="node">Узел</option>
+          <option value="user">Пользователь</option>
+          <option value="security">Безопасность</option>
+        </select>
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="editCondition">Условие (JSON):</label>
+        <textarea id="editCondition" name="condition" placeholder='{"threshold": 80, "operator": ">"}}' style="width: 100%; padding: 8px; box-sizing: border-box; height: 80px; font-family: monospace;"></textarea>
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label>
+          <input type="checkbox" id="editEnabled" name="enabled" checked> Включено
+        </label>
+      </div>
+      <button type="submit" style="width: 100%; padding: 10px; background: #007bff; color: white; border: none; border-radius: 4px;">Сохранить</button>
+    </form>
+  </div>
+</div>
+
+<div class="content-block">
+  <h2>Конфигурации оповещений</h2>
+  <button id="createConfigBtn" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; margin-bottom: 20px;">Создать конфигурацию</button>
+
+  <div id="loading" style="text-align: center; margin: 20px;">Загрузка конфигураций...</div>
+  <div id="configs-cards" style="display: none;"></div>
+  <div id="no-configs" style="display: none; text-align: center; margin: 20px;">Конфигурации недоступны</div>
+  <div id="error" style="display: none; color: red; margin-top: 10px;">Ошибка загрузки конфигураций</div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  // Modal elements
+  const editModal = document.getElementById('editModal');
+  const closeEditModal = document.getElementById('closeEditModal');
+  const editForm = document.getElementById('editForm');
+
+  // Modal event listeners
+  closeEditModal.onclick = () => editModal.style.display = 'none';
+  window.onclick = function(event) {
+    if (event.target == editModal) editModal.style.display = 'none';
+  }
+
+  // Form submission
+  editForm.onsubmit = function(e) {
+    e.preventDefault();
+    const configId = document.getElementById('editConfigId').value;
+    const formData = new FormData(editForm);
+    const data = {
+      type: formData.get('type'),
+      condition: formData.get('condition') ? JSON.parse(formData.get('condition')) : {},
+      enabled: document.getElementById('editEnabled').checked
+    };
+
+    const method = configId ? 'PUT' : 'POST';
+    const url = configId ? `/api/v1/alert_configs/${configId}` : '/api/v1/alert_configs';
+
+    fetch(url, {
+      method: method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    })
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    })
+    .then(result => {
+      if (result.success || result.id) {
+        alert(configId ? 'Конфигурация обновлена успешно' : 'Конфигурация создана успешно');
+        editModal.style.display = 'none';
+        loadConfigs();
+      } else {
+        alert('Операция не удалась');
+      }
+    })
+    .catch(err => {
+      alert('Ошибка: ' + err.message);
+    });
+  };
+
+  // Create config button
+  document.getElementById('createConfigBtn').onclick = () => showEditModal();
+
+  function loadConfigs() {
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('configs-cards').style.display = 'none';
+    document.getElementById('no-configs').style.display = 'none';
+    document.getElementById('error').style.display = 'none';
+
+    fetch('/api/v1/alert_configs')
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}: Не удалось загрузить конфигурации`);
+        return res.json();
+      })
+      .then(data => {
+        const container = document.getElementById('configs-cards');
+        container.innerHTML = '';
+        if (data.length === 0) {
+          document.getElementById('no-configs').style.display = 'block';
+        } else {
+          data.forEach(config => {
+            const card = document.createElement('div');
+            card.className = 'node-card';
+            card.onclick = () => showEditModal(config);
+
+            const statusClass = config.enabled ? 'status-online' : 'status-offline';
+            const statusText = config.enabled ? 'Включено' : 'Отключено';
+
+            card.innerHTML = `
+              <div class="node-card-header">
+                <div class="node-name">${config.type || 'N/A'}</div>
+                <div class="node-status ${statusClass}">${statusText}</div>
+              </div>
+              <div class="node-details">
+                <div class="node-detail">
+                  <span class="node-detail-label">Условие:</span>
+                  <span class="node-detail-value">${JSON.stringify(config.condition) || '{}'}</span>
+                </div>
+                <div class="node-detail">
+                  <span class="node-detail-label">Создано:</span>
+                  <span class="node-detail-value">${config.created_at || 'N/A'}</span>
+                </div>
+              </div>
+              <div style="margin-top: 15px; display: flex; flex-direction: column; gap: 10px;">
+                <button onclick="event.stopPropagation(); showEditModal(${JSON.stringify(config).replace(/"/g, '"')})" style="padding: 8px; background: #007bff; color: white; border: none; border-radius: 4px;">Редактировать</button>
+                <button onclick="event.stopPropagation(); toggleConfig(${config.id}, ${!config.enabled})" style="padding: 8px; background: ${config.enabled ? '#ffc107' : '#28a745'}; color: white; border: none; border-radius: 4px;">${config.enabled ? 'Отключить' : 'Включить'}</button>
+                <button onclick="event.stopPropagation(); deleteConfig(${config.id})" style="padding: 8px; background: #dc3545; color: white; border: none; border-radius: 4px;">Удалить</button>
+              </div>
+            `;
+
+            container.appendChild(card);
+          });
+          document.getElementById('configs-cards').style.display = 'block';
+        }
+        document.getElementById('loading').style.display = 'none';
+      })
+      .catch(err => {
+        console.error('Ошибка загрузки конфигураций:', err);
+        document.getElementById('error').textContent = 'Ошибка загрузки конфигураций: ' + err.message;
+        document.getElementById('error').style.display = 'block';
+        document.getElementById('loading').style.display = 'none';
+      });
+  }
+
+  function showEditModal(config = null) {
+    document.getElementById('editConfigId').value = config ? config.id : '';
+    document.getElementById('editType').value = config ? config.type || 'system' : 'system';
+    document.getElementById('editCondition').value = config ? JSON.stringify(config.condition, null, 2) : '{}';
+    document.getElementById('editEnabled').checked = config ? config.enabled : true;
+    document.getElementById('modalTitle').textContent = config ? 'Редактировать конфигурацию' : 'Создать конфигурацию';
+    editModal.style.display = 'block';
+  }
+
+  function toggleConfig(configId, enabled) {
+    fetch(`/api/v1/alert_configs/${configId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: enabled })
+    })
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    })
+    .then(result => {
+      if (result.success) {
+        alert(`Конфигурация ${enabled ? 'включена' : 'отключена'} успешно`);
+        loadConfigs();
+      } else {
+        alert('Переключение не удалось');
+      }
+    })
+    .catch(err => {
+      alert('Ошибка: ' + err.message);
+    });
+  }
+
+  function deleteConfig(configId) {
+    if (!confirm('Вы уверены, что хотите удалить эту конфигурацию?')) return;
+    fetch(`/api/v1/alert_configs/${configId}`, { method: 'DELETE' })
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then(result => {
+        if (result.success) {
+          alert('Конфигурация удалена успешно');
+          loadConfigs();
+        } else {
+          alert('Удаление не удалось');
+        }
+      })
+      .catch(err => {
+        alert('Ошибка: ' + err.message);
+      });
+  }
+
+  // Initial load
+  loadConfigs();
+});
+</script>
+{% endblock %}

@@ -210,6 +210,12 @@ async def get_nodes_page(request: Request):
     nodes_list = get_nodes(request)
     return render_template("nodes.html", request, page_title="Ноды", nodes=nodes_list)
 
+@app.get("/mobile/nodes", response_class=HTMLResponse)
+async def get_mobile_nodes_page(request: Request):
+    """Отображает мобильную страницу со списком узлов сети."""
+    nodes_list = get_nodes(request)
+    return render_template("mobile/nodes.html", request, page_title="Ноды", nodes=nodes_list)
+
 @app.get("/users", response_class=HTMLResponse)
 async def get_users_page(request: Request):
     """Отображает страницу управления пользователями дашборда."""

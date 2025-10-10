@@ -31,7 +31,7 @@
   </div>
 </div>
 
-<div class="stats-container" style="display: flex; gap: 20px; margin-bottom: 20px; flex-wrap: wrap;">
+<div class="stats-container" style="display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap;">
 <div class="stat-card">
   <h3 style="color: var(--text-color);">Всего узлов</h3>
   <div id="total-nodes">--</div>
@@ -50,27 +50,7 @@
 <button id="refreshBtn" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">Обновить</button>
 </div>
 <div id="loading" style="text-align: center; margin: 20px;">Загрузка узлов...</div>
-<table id="nodes-table" style="display: none; width: 100%; border-collapse: collapse;">
-  <thead>
-    <tr style="background: var(--bg-color);">
-      <th style="border: 1px solid var(--border-color); padding: 8px; color: var(--text-color);">Имя/ID</th>
-      <th style="border: 1px solid var(--border-color); padding: 8px; color: var(--text-color);">ShortName</th>
-      <th style="border: 1px solid var(--border-color); padding: 8px; color: var(--text-color);">ID</th>
-      <th style="border: 1px solid var(--border-color); padding: 8px; color: var(--text-color);">Статус</th>
-      <th style="border: 1px solid var(--border-color); padding: 8px; color: var(--text-color);">Пользователь</th>
-      <th style="border: 1px solid var(--border-color); padding: 8px; color: var(--text-color);">Последний раз</th>
-      <th style="border: 1px solid var(--border-color); padding: 8px; color: var(--text-color);">Батарея</th>
-      <th style="border: 1px solid var(--border-color); padding: 8px; color: var(--text-color);">Позиция</th>
-      <th style="border: 1px solid var(--border-color); padding: 8px; color: var(--text-color);">SNR</th>
-      <th style="border: 1px solid var(--border-color); padding: 8px; color: var(--text-color);">RSSI</th>
-      <th style="border: 1px solid var(--border-color); padding: 8px; color: var(--text-color);">Хопы</th>
-      <th style="border: 1px solid var(--border-color); padding: 8px; color: var(--text-color);">PKI</th>
-      <th style="border: 1px solid var(--border-color); padding: 8px; color: var(--text-color);">Действия</th>
-    </tr>
-  </thead>
-  <tbody id="nodes-body">
-  </tbody>
-</table>
+<div id="nodes-cards" style="display: none;"></div>
 <div id="no-nodes" style="display: none; text-align: center; margin: 20px;">Узлы недоступны</div>
 <div id="error" style="display: none; color: red; margin-top: 10px;">Ошибка загрузки узлов</div>
 
@@ -146,7 +126,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   function loadNodes() {
     document.getElementById('loading').style.display = 'block';
-    document.getElementById('nodes-table').style.display = 'none';
+    document.getElementById('nodes-cards').style.display = 'none';
     document.getElementById('no-nodes').style.display = 'none';
     document.getElementById('error').style.display = 'none';
 
@@ -163,17 +143,18 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('online-nodes').textContent = onlineNodes;
         document.getElementById('max-online-24h').textContent = 'N/A';
 
-        const tbody = document.getElementById('nodes-body');
-        tbody.innerHTML = '';
+        const container = document.getElementById('nodes-cards');
+        container.innerHTML = '';
         if (data.length === 0) {
           document.getElementById('no-nodes').style.display = 'block';
         } else {
           data.forEach(node => {
-            const row = tbody.insertRow();
-            row.style.cursor = 'pointer';
-            row.onclick = () => showNodeModal(node);
+            const card = document.createElement('div');
+            card.className = 'node-card';
+            card.onclick = () => showNodeModal(node);
 
-            const statusIndicator = node.is_online ? '<span class="status-indicator online">● Онлайн</span>' : '<span class="status-indicator offline">● Офлайн</span>';
+            const statusClass = node.is_online ? 'status-online' : 'status-offline';
+            const statusText = node.is_online ? 'Онлайн' : 'Офлайн';
             const userInfo = node.username ? `${node.username}${node.nickname ? ` (${node.nickname})` : ''}` : 'N/A';
 
             let shortName = 'N/A';
@@ -181,21 +162,46 @@ document.addEventListener('DOMContentLoaded', function() {
               shortName = node.id.substring(1, 5);
             }
 
-            row.insertCell(0).innerHTML = `<strong>${node.name || node.id}</strong>`;
-            row.insertCell(1).textContent = shortName;
-            row.insertCell(2).textContent = node.id;
-            row.insertCell(3).innerHTML = statusIndicator;
-            row.insertCell(4).textContent = userInfo;
-            row.insertCell(5).textContent = formatTimestamp(node.last_seen);
-            row.insertCell(6).textContent = node.battery_level ? node.battery_level + '%' : 'N/A';
-            row.insertCell(7).textContent = node.lat && node.lng ? `${node.lat.toFixed(4)}, ${node.lng.toFixed(4)}` : 'N/A';
-            row.insertCell(8).textContent = node.snr || 'N/A';
-            row.insertCell(9).textContent = node.rssi || 'N/A';
-            row.insertCell(10).textContent = node.hop_count || 'N/A';
-            row.insertCell(11).textContent = node.pki_status || 'N/A';
-            row.insertCell(12).innerHTML = '<button onclick="event.stopPropagation(); showNodeModal(' + JSON.stringify(node).replace(/"/g, '"') + ')">Детали</button>';
+            card.innerHTML = `
+              <div class="node-card-header">
+                <div class="node-name">${node.name || node.id}</div>
+                <div class="node-status ${statusClass}">${statusText}</div>
+              </div>
+              <div class="node-details">
+                <div class="node-detail">
+                  <span class="node-detail-label">ID:</span>
+                  <span class="node-detail-value">${node.id}</span>
+                </div>
+                <div class="node-detail">
+                  <span class="node-detail-label">ShortName:</span>
+                  <span class="node-detail-value">${shortName}</span>
+                </div>
+                <div class="node-detail">
+                  <span class="node-detail-label">Пользователь:</span>
+                  <span class="node-detail-value">${userInfo}</span>
+                </div>
+                <div class="node-detail">
+                  <span class="node-detail-label">Последний раз:</span>
+                  <span class="node-detail-value">${formatTimestamp(node.last_seen)}</span>
+                </div>
+                <div class="node-detail">
+                  <span class="node-detail-label">Батарея:</span>
+                  <span class="node-detail-value">${node.battery_level ? node.battery_level + '%' : 'N/A'}</span>
+                </div>
+                <div class="node-detail">
+                  <span class="node-detail-label">Позиция:</span>
+                  <span class="node-detail-value">${node.lat && node.lng ? `${node.lat.toFixed(4)}, ${node.lng.toFixed(4)}` : 'N/A'}</span>
+                </div>
+                <div class="node-detail">
+                  <span class="node-detail-label">SNR/RSSI:</span>
+                  <span class="node-detail-value">${node.snr || 'N/A'} / ${node.rssi || 'N/A'}</span>
+                </div>
+              </div>
+            `;
+
+            container.appendChild(card);
           });
-          document.getElementById('nodes-table').style.display = 'table';
+          document.getElementById('nodes-cards').style.display = 'block';
         }
         document.getElementById('loading').style.display = 'none';
       })
@@ -256,7 +262,7 @@ document.addEventListener('DOMContentLoaded', function() {
   loadNodes();
 });
 
-loadNodes();
-setInterval(loadNodes, 10000);
+// Auto-refresh
+setInterval(loadNodes, 30000);
 </script>
 {% endblock %}

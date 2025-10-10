@@ -1,0 +1,282 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Modal for creating/editing alert -->
+<div id="editModal" class="modal">
+  <div class="modal-content">
+    <span id="closeEditModal" style="color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer;">&times;</span>
+    <h2 id="modalTitle">Создать оповещение</h2>
+    <form id="editForm">
+      <input type="hidden" id="editAlertId" name="id">
+      <div style="margin-bottom: 15px;">
+        <label for="editType">Тип:</label>
+        <select id="editType" name="type" required style="width: 100%; padding: 8px; box-sizing: border-box;">
+          <option value="system">Система</option>
+          <option value="node">Узел</option>
+          <option value="user">Пользователь</option>
+          <option value="security">Безопасность</option>
+        </select>
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="editMessage">Сообщение:</label>
+        <textarea id="editMessage" name="message" required style="width: 100%; padding: 8px; box-sizing: border-box; height: 80px;"></textarea>
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="editSeverity">Серьезность:</label>
+        <select id="editSeverity" name="severity" style="width: 100%; padding: 8px; box-sizing: border-box;">
+          <option value="info">Инфо</option>
+          <option value="warning">Предупреждение</option>
+          <option value="error">Ошибка</option>
+          <option value="critical">Критично</option>
+        </select>
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="editNodeId">ID узла:</label>
+        <input type="text" id="editNodeId" name="node_id" style="width: 100%; padding: 8px; box-sizing: border-box;">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="editUserId">ID пользователя:</label>
+        <input type="text" id="editUserId" name="user_id" style="width: 100%; padding: 8px; box-sizing: border-box;">
+      </div>
+      <button type="submit" style="width: 100%; padding: 10px; background: #007bff; color: white; border: none; border-radius: 4px;">Сохранить</button>
+    </form>
+  </div>
+</div>
+
+<!-- Alerts Management Section -->
+<div class="content-block">
+  <h2>Системные оповещения</h2>
+  <button id="createAlertBtn" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; margin-bottom: 20px;">Создать оповещение</button>
+
+  <!-- Filters -->
+  <details style="margin-bottom: 20px;">
+    <summary>Фильтры</summary>
+    <div style="display: flex; gap: 15px; flex-wrap: wrap; margin-top: 10px;">
+      <div>
+        <label for="statusFilter">Статус:</label>
+        <select id="statusFilter">
+          <option value="">Все</option>
+          <option value="active">Активные</option>
+          <option value="acknowledged">Подтвержденные</option>
+          <option value="resolved">Разрешенные</option>
+        </select>
+      </div>
+      <div>
+        <label for="typeFilter">Тип:</label>
+        <select id="typeFilter">
+          <option value="">Все</option>
+          <option value="system">Система</option>
+          <option value="node">Узел</option>
+          <option value="user">Пользователь</option>
+          <option value="security">Безопасность</option>
+        </select>
+      </div>
+      <button id="applyFiltersBtn" style="padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px;">Применить</button>
+    </div>
+  </details>
+
+  <div id="loading" style="text-align: center; margin: 20px;">Загрузка оповещений...</div>
+  <div id="alerts-cards" style="display: none;"></div>
+  <div id="no-alerts" style="display: none; text-align: center; margin: 20px;">Оповещения недоступны</div>
+  <div id="error" style="display: none; color: red; margin-top: 10px;">Ошибка загрузки оповещений</div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  // Modal elements
+  const editModal = document.getElementById('editModal');
+  const closeEditModal = document.getElementById('closeEditModal');
+  const editForm = document.getElementById('editForm');
+
+  // Modal event listeners
+  closeEditModal.onclick = () => editModal.style.display = 'none';
+  window.onclick = function(event) {
+    if (event.target == editModal) editModal.style.display = 'none';
+  }
+
+  // Form submission
+  editForm.onsubmit = function(e) {
+    e.preventDefault();
+    const alertId = document.getElementById('editAlertId').value;
+    const formData = new FormData(editForm);
+    const data = {
+      type: formData.get('type'),
+      message: formData.get('message'),
+      severity: formData.get('severity'),
+      node_id: formData.get('node_id') || null,
+      user_id: formData.get('user_id') || null
+    };
+
+    const method = alertId ? 'PUT' : 'POST';
+    const url = alertId ? `/api/v1/alerts/${alertId}` : '/api/v1/alerts';
+
+    fetch(url, {
+      method: method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    })
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    })
+    .then(result => {
+      if (result.success || result.id) {
+        alert(alertId ? 'Оповещение обновлено успешно' : 'Оповещение создано успешно');
+        editModal.style.display = 'none';
+        loadAlerts();
+      } else {
+        alert('Операция не удалась');
+      }
+    })
+    .catch(err => {
+      alert('Ошибка: ' + err.message);
+    });
+  };
+
+  // Create alert button
+  document.getElementById('createAlertBtn').onclick = () => showEditModal();
+
+  // Filter button
+  document.getElementById('applyFiltersBtn').onclick = () => loadAlerts();
+
+  function loadAlerts() {
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('alerts-cards').style.display = 'none';
+    document.getElementById('no-alerts').style.display = 'none';
+    document.getElementById('error').style.display = 'none';
+
+    const statusFilter = document.getElementById('statusFilter').value;
+    const typeFilter = document.getElementById('typeFilter').value;
+
+    let url = '/api/v1/alerts';
+    const params = [];
+    if (statusFilter) params.push(`status=${statusFilter}`);
+    if (typeFilter) params.push(`type_filter=${typeFilter}`);
+    if (params.length) url += '?' + params.join('&');
+
+    fetch(url)
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}: Не удалось загрузить оповещения`);
+        return res.json();
+      })
+      .then(data => {
+        const container = document.getElementById('alerts-cards');
+        container.innerHTML = '';
+        if (data.length === 0) {
+          document.getElementById('no-alerts').style.display = 'block';
+        } else {
+          data.forEach(alert => {
+            const card = document.createElement('div');
+            card.className = 'node-card';
+            card.onclick = () => showEditModal(alert);
+
+            const statusClass = alert.status === 'active' ? 'status-online' : alert.status === 'acknowledged' ? 'status-offline' : 'status-offline';
+            const statusText = alert.status === 'active' ? 'Активно' : alert.status === 'acknowledged' ? 'Подтверждено' : 'Разрешено';
+
+            card.innerHTML = `
+              <div class="node-card-header">
+                <div class="node-name">${alert.type || 'N/A'}</div>
+                <div class="node-status ${statusClass}">${statusText}</div>
+              </div>
+              <div class="node-details">
+                <div class="node-detail">
+                  <span class="node-detail-label">Сообщение:</span>
+                  <span class="node-detail-value">${alert.message || 'N/A'}</span>
+                </div>
+                <div class="node-detail">
+                  <span class="node-detail-label">Серьезность:</span>
+                  <span class="node-detail-value">${alert.severity || 'N/A'}</span>
+                </div>
+                <div class="node-detail">
+                  <span class="node-detail-label">ID узла:</span>
+                  <span class="node-detail-value">${alert.node_id || 'N/A'}</span>
+                </div>
+                <div class="node-detail">
+                  <span class="node-detail-label">ID пользователя:</span>
+                  <span class="node-detail-value">${alert.user_id || 'N/A'}</span>
+                </div>
+                <div class="node-detail">
+                  <span class="node-detail-label">Время:</span>
+                  <span class="node-detail-value">${alert.timestamp || 'N/A'}</span>
+                </div>
+              </div>
+              <div style="margin-top: 15px; display: flex; flex-direction: column; gap: 10px;">
+                ${alert.status === 'active' ? `<button onclick="event.stopPropagation(); updateAlertStatus(${alert.id}, 'acknowledged')" style="padding: 8px; background: #ffc107; color: white; border: none; border-radius: 4px;">Подтвердить</button>` : ''}
+                <button onclick="event.stopPropagation(); updateAlertStatus(${alert.id}, 'resolved')" style="padding: 8px; background: #28a745; color: white; border: none; border-radius: 4px;">Разрешить</button>
+                <button onclick="event.stopPropagation(); deleteAlert(${alert.id})" style="padding: 8px; background: #dc3545; color: white; border: none; border-radius: 4px;">Удалить</button>
+              </div>
+            `;
+
+            container.appendChild(card);
+          });
+          document.getElementById('alerts-cards').style.display = 'block';
+        }
+        document.getElementById('loading').style.display = 'none';
+      })
+      .catch(err => {
+        console.error('Ошибка загрузки оповещений:', err);
+        document.getElementById('error').textContent = 'Ошибка загрузки оповещений: ' + err.message;
+        document.getElementById('error').style.display = 'block';
+        document.getElementById('loading').style.display = 'none';
+      });
+  }
+
+  function showEditModal(alert = null) {
+    document.getElementById('editAlertId').value = alert ? alert.id : '';
+    document.getElementById('editType').value = alert ? alert.type || 'system' : 'system';
+    document.getElementById('editMessage').value = alert ? alert.message || '' : '';
+    document.getElementById('editSeverity').value = alert ? alert.severity || 'info' : 'info';
+    document.getElementById('editNodeId').value = alert ? alert.node_id || '' : '';
+    document.getElementById('editUserId').value = alert ? alert.user_id || '' : '';
+    document.getElementById('modalTitle').textContent = alert ? 'Редактировать оповещение' : 'Создать оповещение';
+    editModal.style.display = 'block';
+  }
+
+  function updateAlertStatus(alertId, status) {
+    fetch(`/api/v1/alerts/${alertId}/status`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: status })
+    })
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    })
+    .then(result => {
+      if (result.success) {
+        alert(`Оповещение ${status} успешно`);
+        loadAlerts();
+      } else {
+        alert('Обновление статуса не удалось');
+      }
+    })
+    .catch(err => {
+      alert('Ошибка: ' + err.message);
+    });
+  }
+
+  function deleteAlert(alertId) {
+    if (!confirm('Вы уверены, что хотите удалить это оповещение?')) return;
+    fetch(`/api/v1/alerts/${alertId}`, { method: 'DELETE' })
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then(result => {
+        if (result.success) {
+          alert('Оповещение удалено успешно');
+          loadAlerts();
+        } else {
+          alert('Удаление не удалось');
+        }
+      })
+      .catch(err => {
+        alert('Ошибка: ' + err.message);
+      });
+  }
+
+  // Initial load
+  loadAlerts();
+});
+</script>
+{% endblock %}

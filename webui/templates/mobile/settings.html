@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="settings-page">
+  <div class="settings-header">
+    <h3>Настройки</h3>
+    <div class="settings-actions">
+      <button id="export-btn" style="padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">Экспорт в config.ini</button>
+      <button id="restart-btn" style="padding: 10px 20px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer;" onclick="confirmRestart()">Перезапуск бота</button>
+    </div>
+  </div>
+
+  <div id="loading" style="text-align: center; margin: 20px; display: none;">Загрузка настроек...</div>
+  <div id="error" style="display: none; color: red; margin: 20px; text-align: center;"></div>
+  <div id="settings-container" style="display: none;">
+  </div>
+  <div id="no-settings" style="display: none; text-align: center; margin: 20px;">Нет доступных настроек.</div>
+</div>
+
+<script>
+let sections = {{ sections | tojson }};
+
+function loadSettings() {
+  document.getElementById('loading').style.display = 'block';
+  document.getElementById('settings-container').style.display = 'none';
+  document.getElementById('no-settings').style.display = 'none';
+  document.getElementById('error').style.display = 'none';
+
+  fetch('/api/v1/settings')
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to fetch settings`);
+      return res.json();
+    })
+    .then(data => {
+      const container = document.getElementById('settings-container');
+      container.innerHTML = '';
+
+      Object.entries(sections).forEach(([sectionName, items]) => {
+        const details = document.createElement('details');
+        details.style.marginBottom = '20px';
+
+        const summary = document.createElement('summary');
+        summary.style.fontSize = '1.2em';
+        summary.style.fontWeight = 'bold';
+        summary.style.marginBottom = '10px';
+        summary.style.cursor = 'pointer';
+        summary.textContent = sectionName.toUpperCase();
+        details.appendChild(summary);
+
+        const cardsContainer = document.createElement('div');
+
+        Object.entries(items).forEach(([option, setting]) => {
+          const card = document.createElement('div');
+          card.className = 'node-card';
+          card.innerHTML = `
+            <div class="node-card-header">
+              <div class="node-name">${option}</div>
+            </div>
+            <div class="node-details">
+              <div class="node-detail">
+                <span class="node-detail-label">Описание:</span>
+                <span class="node-detail-value">${setting.description}</span>
+              </div>
+              <div class="node-detail">
+                <span class="node-detail-label">Значение:</span>
+                <input type="text" value="${data[setting.key] || setting.value}" class="setting-input" data-key="${setting.key}" style="width: 100%; padding: 8px; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px;" />
+              </div>
+            </div>
+            <div style="margin-top: 15px;">
+              <button onclick="saveSetting('${setting.key}')" style="padding: 8px 16px; background: #28a745; color: white; border: none; border-radius: 4px; width: 100%;">Сохранить</button>
+            </div>
+          `;
+          cardsContainer.appendChild(card);
+        });
+
+        details.appendChild(cardsContainer);
+        container.appendChild(details);
+      });
+
+      document.getElementById('settings-container').style.display = 'block';
+      document.getElementById('loading').style.display = 'none';
+    })
+    .catch(err => {
+      console.error('Settings fetch error:', err);
+      document.getElementById('error').textContent = 'Ошибка загрузки настроек: ' + err.message;
+      document.getElementById('error').style.display = 'block';
+      document.getElementById('loading').style.display = 'none';
+    });
+}
+
+function saveSetting(key) {
+  const input = document.querySelector(`input[data-key="${key}"]`);
+  const value = input.value.trim();
+  if (!value) {
+    alert('Значение не может быть пустым');
+    return;
+  }
+
+  fetch(`/api/v1/settings/${key}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value: value })
+  })
+  .then(res => {
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  })
+  .then(data => {
+    if (data.success) {
+      input.style.backgroundColor = '#d4edda';
+      setTimeout(() => { input.style.backgroundColor = ''; }, 1000);
+    } else {
+      throw new Error('Сохранение не удалось');
+    }
+  })
+  .catch(err => {
+    console.error('Save error:', err);
+    alert('Ошибка сохранения: ' + err.message);
+  });
+}
+
+// Auto-save on input change (debounced)
+let saveTimeout;
+document.addEventListener('input', (e) => {
+  if (e.target.classList.contains('setting-input')) {
+    const key = e.target.dataset.key;
+    clearTimeout(saveTimeout);
+    saveTimeout = setTimeout(() => saveSetting(key), 1000);
+  }
+});
+
+function exportConfig() {
+  fetch('/export_config', { method: 'POST' })
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    })
+    .then(data => {
+      if (data.success) {
+        alert('Конфигурация экспортирована в config.ini успешно!');
+      } else {
+        throw new Error('Экспорт не удался');
+      }
+    })
+    .catch(err => {
+      console.error('Export error:', err);
+      alert('Ошибка экспорта: ' + err.message);
+    });
+}
+
+function confirmRestart() {
+  if (confirm('Вы уверены, что хотите перезапустить бота? Это прервет все текущие операции.')) {
+    document.getElementById('restart-btn').textContent = 'Перезапуск...';
+    document.getElementById('restart-btn').disabled = true;
+
+    fetch('/api/v1/commands', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command_type: 'restart_bot' })
+    })
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    })
+    .then(data => {
+      if (data.id) {
+        alert('Команда перезапуска отправлена. Бот перезапустится в ближайшее время.');
+      } else {
+        throw new Error('Команда не отправлена');
+      }
+    })
+    .catch(err => {
+      console.error('Restart error:', err);
+      alert('Ошибка перезапуска: ' + err.message);
+      document.getElementById('restart-btn').textContent = 'Перезапуск бота';
+      document.getElementById('restart-btn').disabled = false;
+    });
+  }
+}
+
+document.getElementById('export-btn').addEventListener('click', exportConfig);
+
+// Initial load
+if (Object.keys(sections).length === 0) {
+  loadSettings();
+} else {
+  loadSettings();
+}
+
+// Refresh every 30s
+setInterval(loadSettings, 30000);
+</script>
+{% endblock %}

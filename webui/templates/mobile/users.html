@@ -1,0 +1,502 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Modal for editing user -->
+<div id="editModal" class="modal">
+  <div class="modal-content">
+    <span id="closeEditModal" class="close">&times;</span>
+    <h2>Редактировать пользователя</h2>
+    <form id="editForm">
+      <input type="hidden" id="editUserId" name="id">
+      <div style="margin-bottom: 15px;">
+        <label for="editUsername">Имя пользователя:</label>
+        <input type="text" id="editUsername" name="username" required>
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="editNickname">Псевдоним:</label>
+        <input type="text" id="editNickname" name="nickname">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="editNodeId">ID узла:</label>
+        <input type="text" id="editNodeId" name="node_id">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="editEmail">Email:</label>
+        <input type="email" id="editEmail" name="email">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="editRole">Роль:</label>
+        <select id="editRole" name="role">
+          <option value="user">Пользователь</option>
+          <option value="admin">Администратор</option>
+        </select>
+      </div>
+      <button type="submit">Обновить</button>
+    </form>
+  </div>
+</div>
+
+<!-- Modal for managing user groups -->
+<div id="groupsModal" class="modal">
+  <div class="modal-content" style="max-width: 600px; max-height: 80%; overflow-y: auto;">
+    <span id="closeGroupsModal" class="close">&times;</span>
+    <h2>Управление группами для <span id="groupsUserName"></span></h2>
+    <input type="hidden" id="groupsUserId">
+    <div id="userGroupsList" style="margin-bottom: 20px;">
+      <h3>Текущие группы:</h3>
+      <div id="currentGroups"></div>
+    </div>
+    <div>
+      <h3>Добавить в группу:</h3>
+      <select id="availableGroups">
+        <option value="">Выберите группу...</option>
+      </select>
+      <button id="addToGroupBtn">Добавить</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal for editing group -->
+<div id="editGroupModal" class="modal">
+  <div class="modal-content">
+    <span id="closeEditGroupModal" class="close">&times;</span>
+    <h2 id="groupModalTitle">Создать группу</h2>
+    <form id="editGroupForm">
+      <input type="hidden" id="editGroupId" name="id">
+      <div style="margin-bottom: 15px;">
+        <label for="editGroupName">Имя группы:</label>
+        <input type="text" id="editGroupName" name="name" required>
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="editGroupDescription">Описание:</label>
+        <textarea id="editGroupDescription" name="description" style="height: 80px;"></textarea>
+      </div>
+      <button type="submit">Сохранить</button>
+    </form>
+  </div>
+</div>
+
+<!-- Groups Management Section -->
+<div class="content-block" style="margin-bottom: 30px;">
+  <h2>Управление группами</h2>
+  <button id="createGroupBtn" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; margin-bottom: 20px;">Создать новую группу</button>
+  <div id="groups-loading" style="text-align: center; margin: 20px;">Загрузка групп...</div>
+  <div id="groups-cards" style="display: none;"></div>
+  <div id="no-groups" style="display: none; text-align: center; margin: 20px;">Группы недоступны</div>
+  <div id="groups-error" style="display: none; color: red; margin-top: 10px;">Ошибка загрузки групп</div>
+</div>
+
+<!-- Users Management Section -->
+<div class="content-block">
+  <h2>Управление пользователями</h2>
+  <div id="loading" style="text-align: center; margin: 20px;">Загрузка пользователей...</div>
+  <div id="users-cards" style="display: none;"></div>
+  <div id="no-users" style="display: none; text-align: center; margin: 20px;">Пользователи недоступны</div>
+  <div id="error" style="display: none; color: red; margin-top: 10px;">Ошибка загрузки пользователей</div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  // User modal elements
+  const editModal = document.getElementById('editModal');
+  const closeEditModal = document.getElementById('closeEditModal');
+  const editForm = document.getElementById('editForm');
+
+  // Groups modal elements
+  const groupsModal = document.getElementById('groupsModal');
+  const closeGroupsModal = document.getElementById('closeGroupsModal');
+
+  // Group edit modal elements
+  const editGroupModal = document.getElementById('editGroupModal');
+  const closeEditGroupModal = document.getElementById('closeEditGroupModal');
+  const editGroupForm = document.getElementById('editGroupForm');
+
+  // Modal event listeners
+  closeEditModal.onclick = () => editModal.style.display = 'none';
+  closeGroupsModal.onclick = () => groupsModal.style.display = 'none';
+  closeEditGroupModal.onclick = () => editGroupModal.style.display = 'none';
+
+  window.onclick = function(event) {
+    if (event.target == editModal) editModal.style.display = 'none';
+    if (event.target == groupsModal) groupsModal.style.display = 'none';
+    if (event.target == editGroupModal) editGroupModal.style.display = 'none';
+  }
+
+  // User form submission
+  editForm.onsubmit = function(e) {
+    e.preventDefault();
+    const userId = document.getElementById('editUserId').value;
+    const formData = new FormData(editForm);
+    const data = {
+      username: formData.get('username'),
+      nickname: formData.get('nickname') || null,
+      node_id: formData.get('node_id') || null,
+      email: formData.get('email') || null,
+      role: formData.get('role')
+    };
+
+    fetch(`/api/v1/users/${userId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    })
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    })
+    .then(result => {
+      if (result.success) {
+        alert('Пользователь обновлен успешно');
+        editModal.style.display = 'none';
+        loadUsers();
+      } else {
+        alert('Обновление не удалось');
+      }
+    })
+    .catch(err => {
+      alert('Error: ' + err.message);
+    });
+  };
+
+  // Group form submission
+  editGroupForm.onsubmit = function(e) {
+    e.preventDefault();
+    const groupId = document.getElementById('editGroupId').value;
+    const formData = new FormData(editGroupForm);
+    const data = {
+      name: formData.get('name'),
+      description: formData.get('description') || ''
+    };
+
+    const method = groupId ? 'PUT' : 'POST';
+    const url = groupId ? `/api/v1/groups/${groupId}` : '/api/v1/groups';
+
+    fetch(url, {
+      method: method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    })
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    })
+    .then(result => {
+      if (result.success || result.id) {
+        alert(groupId ? 'Группа обновлена успешно' : 'Группа создана успешно');
+        editGroupModal.style.display = 'none';
+        loadGroups();
+      } else {
+        alert('Операция не удалась');
+      }
+    })
+    .catch(err => {
+      alert('Error: ' + err.message);
+    });
+  };
+
+  // Create group button
+  document.getElementById('createGroupBtn').onclick = () => showEditGroupModal();
+
+  // Add to group functionality
+  document.getElementById('addToGroupBtn').onclick = function() {
+    const userId = document.getElementById('groupsUserId').value;
+    const groupId = document.getElementById('availableGroups').value;
+    if (!groupId) {
+      alert('Пожалуйста, выберите группу');
+      return;
+    }
+
+    fetch(`/api/v1/users/${userId}/groups/${groupId}`, { method: 'POST' })
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    })
+    .then(result => {
+      if (result.success) {
+        alert('Пользователь добавлен в группу успешно');
+        loadUserGroups(userId);
+        loadAvailableGroups(userId);
+      } else {
+        alert('Не удалось добавить пользователя в группу');
+      }
+    })
+    .catch(err => {
+      alert('Ошибка: ' + err.message);
+    });
+  };
+
+  function loadUsers() {
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('users-cards').style.display = 'none';
+    document.getElementById('no-users').style.display = 'none';
+    document.getElementById('error').style.display = 'none';
+
+    fetch('/api/v1/users')
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to fetch users`);
+        return res.json();
+      })
+      .then(data => {
+        const container = document.getElementById('users-cards');
+        container.innerHTML = '';
+        if (data.length === 0) {
+          document.getElementById('no-users').style.display = 'block';
+        } else {
+          Promise.all(data.map(user => fetch(`/api/v1/users/${user.id}/groups`).then(res => res.json())))
+          .then(groupsData => {
+            data.forEach((user, index) => {
+              const card = document.createElement('div');
+              card.className = 'node-card';
+
+              const userGroups = groupsData[index] || [];
+              const groupsText = userGroups.map(g => g.name).join(', ') || 'Нет';
+
+              card.innerHTML = `
+                <div class="node-card-header">
+                  <div class="node-name">${user.username || 'N/A'}</div>
+                  <div class="node-status status-online">${user.role || 'user'}</div>
+                </div>
+                <div class="node-details">
+                  <div class="node-detail">
+                    <span class="node-detail-label">Псевдоним:</span>
+                    <span class="node-detail-value">${user.nickname || 'N/A'}</span>
+                  </div>
+                  <div class="node-detail">
+                    <span class="node-detail-label">ID узла:</span>
+                    <span class="node-detail-value">${user.node_id || 'N/A'}</span>
+                  </div>
+                  <div class="node-detail">
+                    <span class="node-detail-label">Email:</span>
+                    <span class="node-detail-value">${user.email || 'N/A'}</span>
+                  </div>
+                  <div class="node-detail">
+                    <span class="node-detail-label">Группы:</span>
+                    <span class="node-detail-value">${groupsText}</span>
+                  </div>
+                  <div class="node-detail">
+                    <span class="node-detail-label">Создано:</span>
+                    <span class="node-detail-value">${user.created_at || 'N/A'}</span>
+                  </div>
+                </div>
+                <div style="margin-top: 15px; display: flex; flex-direction: column; gap: 10px;">
+                  <button onclick="event.stopPropagation(); showEditModal(${JSON.stringify(user).replace(/"/g, '"')})" style="padding: 8px; background: #007bff; color: white; border: none; border-radius: 4px;">Редактировать</button>
+                  <button onclick="event.stopPropagation(); showGroupsModal(${JSON.stringify(user).replace(/"/g, '"')})" style="padding: 8px; background: #17a2b8; color: white; border: none; border-radius: 4px;">Группы</button>
+                  <button onclick="event.stopPropagation(); deleteUser(${user.id})" style="padding: 8px; background: #dc3545; color: white; border: none; border-radius: 4px;">Удалить</button>
+                </div>
+              `;
+
+              container.appendChild(card);
+            });
+            document.getElementById('users-cards').style.display = 'block';
+          });
+        }
+        document.getElementById('loading').style.display = 'none';
+      })
+      .catch(err => {
+        console.error('Ошибка загрузки пользователей:', err);
+        document.getElementById('error').textContent = 'Ошибка загрузки пользователей: ' + err.message;
+        document.getElementById('error').style.display = 'block';
+        document.getElementById('loading').style.display = 'none';
+      });
+  }
+
+  function loadGroups() {
+    document.getElementById('groups-loading').style.display = 'block';
+    document.getElementById('groups-cards').style.display = 'none';
+    document.getElementById('no-groups').style.display = 'none';
+    document.getElementById('groups-error').style.display = 'none';
+
+    fetch('/api/v1/groups')
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to fetch groups`);
+        return res.json();
+      })
+      .then(data => {
+        const container = document.getElementById('groups-cards');
+        container.innerHTML = '';
+        if (data.length === 0) {
+          document.getElementById('no-groups').style.display = 'block';
+        } else {
+          Promise.all(data.map(group => fetch(`/api/v1/groups/${group.id}/users`).then(res => res.json())))
+          .then(membersData => {
+            data.forEach((group, index) => {
+              const card = document.createElement('div');
+              card.className = 'node-card';
+
+              const members = membersData[index] || [];
+
+              card.innerHTML = `
+                <div class="node-card-header">
+                  <div class="node-name">${group.name || 'N/A'}</div>
+                  <div class="node-status status-online">${members.length} участников</div>
+                </div>
+                <div class="node-details">
+                  <div class="node-detail">
+                    <span class="node-detail-label">Описание:</span>
+                    <span class="node-detail-value">${group.description || 'N/A'}</span>
+                  </div>
+                  <div class="node-detail">
+                    <span class="node-detail-label">Создано:</span>
+                    <span class="node-detail-value">${group.created_at || 'N/A'}</span>
+                  </div>
+                </div>
+                <div style="margin-top: 15px; display: flex; flex-direction: column; gap: 10px;">
+                  <button onclick="event.stopPropagation(); showEditGroupModal(${JSON.stringify(group).replace(/"/g, '"')})" style="padding: 8px; background: #007bff; color: white; border: none; border-radius: 4px;">Редактировать</button>
+                  <button onclick="event.stopPropagation(); deleteGroup(${group.id})" style="padding: 8px; background: #dc3545; color: white; border: none; border-radius: 4px;">Удалить</button>
+                </div>
+              `;
+
+              container.appendChild(card);
+            });
+            document.getElementById('groups-cards').style.display = 'block';
+          });
+        }
+        document.getElementById('groups-loading').style.display = 'none';
+      })
+      .catch(err => {
+        console.error('Ошибка загрузки групп:', err);
+        document.getElementById('groups-error').textContent = 'Ошибка загрузки групп: ' + err.message;
+        document.getElementById('groups-error').style.display = 'block';
+        document.getElementById('groups-loading').style.display = 'none';
+      });
+  }
+
+  function showEditModal(user) {
+    document.getElementById('editUserId').value = user.id;
+    document.getElementById('editUsername').value = user.username || '';
+    document.getElementById('editNickname').value = user.nickname || '';
+    document.getElementById('editNodeId').value = user.node_id || '';
+    document.getElementById('editEmail').value = user.email || '';
+    document.getElementById('editRole').value = user.role || 'user';
+    editModal.style.display = 'block';
+  }
+
+  function showGroupsModal(user) {
+    document.getElementById('groupsUserId').value = user.id;
+    document.getElementById('groupsUserName').textContent = user.username;
+    loadUserGroups(user.id);
+    loadAvailableGroups(user.id);
+    groupsModal.style.display = 'block';
+  }
+
+  function showEditGroupModal(group = null) {
+    document.getElementById('editGroupId').value = group ? group.id : '';
+    document.getElementById('editGroupName').value = group ? group.name || '' : '';
+    document.getElementById('editGroupDescription').value = group ? group.description || '' : '';
+    document.getElementById('groupModalTitle').textContent = group ? 'Редактировать группу' : 'Создать группу';
+    editGroupModal.style.display = 'block';
+  }
+
+  function loadUserGroups(userId) {
+    fetch(`/api/v1/users/${userId}/groups`)
+    .then(res => res.json())
+    .then(groups => {
+      const container = document.getElementById('currentGroups');
+      container.innerHTML = '';
+      if (groups.length === 0) {
+        container.innerHTML = '<p>Группы не назначены</p>';
+      } else {
+        groups.forEach(group => {
+          const groupDiv = document.createElement('div');
+          groupDiv.style = 'display: flex; justify-content: space-between; align-items: center; padding: 10px; margin-bottom: 5px; background: rgba(255,255,255,0.1); border-radius: 4px;';
+          groupDiv.innerHTML = `
+            <span>${group.name}</span>
+            <button onclick="removeFromGroup(${userId}, ${group.id})" style="padding: 5px 10px; background: #dc3545; color: white; border: none; border-radius: 4px;">Удалить</button>
+          `;
+          container.appendChild(groupDiv);
+        });
+      }
+    });
+  }
+
+  function loadAvailableGroups(userId) {
+    Promise.all([
+      fetch('/api/v1/groups').then(res => res.json()),
+      fetch(`/api/v1/users/${userId}/groups`).then(res => res.json())
+    ])
+    .then(([allGroups, userGroups]) => {
+      const userGroupIds = userGroups.map(g => g.id);
+      const availableGroups = allGroups.filter(g => !userGroupIds.includes(g.id));
+
+      const select = document.getElementById('availableGroups');
+      select.innerHTML = '<option value="">Выберите группу...</option>';
+      availableGroups.forEach(group => {
+        const option = document.createElement('option');
+        option.value = group.id;
+        option.textContent = group.name;
+        select.appendChild(option);
+      });
+    });
+  }
+
+  // Global function for removing from group
+  window.removeFromGroup = function(userId, groupId) {
+    if (!confirm('Удалить пользователя из этой группы?')) return;
+    fetch(`/api/v1/users/${userId}/groups/${groupId}`, { method: 'DELETE' })
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    })
+    .then(result => {
+      if (result.success) {
+        alert('Пользователь удален из группы успешно');
+        loadUserGroups(userId);
+        loadAvailableGroups(userId);
+        loadUsers(); // Refresh the main table
+      } else {
+        alert('Не удалось удалить пользователя из группы');
+      }
+    })
+    .catch(err => {
+      alert('Error: ' + err.message);
+    });
+  };
+
+  function deleteUser(userId) {
+    if (!confirm('Вы уверены, что хотите удалить этого пользователя?')) return;
+    fetch(`/api/v1/users/${userId}`, { method: 'DELETE' })
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then(result => {
+        if (result.success) {
+          alert('Пользователь удален успешно');
+          loadUsers();
+        } else {
+          alert('Удаление не удалось');
+        }
+      })
+      .catch(err => {
+        alert('Error: ' + err.message);
+      });
+  }
+
+  function deleteGroup(groupId) {
+    if (!confirm('Вы уверены, что хотите удалить эту группу? Это удалит все назначения пользователей.')) return;
+    fetch(`/api/v1/groups/${groupId}`, { method: 'DELETE' })
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then(result => {
+        if (result.success) {
+          alert('Группа удалена успешно');
+          loadGroups();
+          loadUsers(); // Refresh users table to update group assignments
+        } else {
+          alert('Delete failed');
+        }
+      })
+      .catch(err => {
+        alert('Error: ' + err.message);
+      });
+  }
+
+  // Initial load
+  loadUsers();
+  loadGroups();
+  // No auto-refresh for users/groups, as it's admin action
+});
+</script>
+{% endblock %}
