@@ -31,3 +31,4 @@ bee.txt
 # database files
 dashboard.db*
 webui/dashboard.db*
+data/checklist.db

@@ -159,6 +159,8 @@ else
     fi
 fi
 
+python -c "from modules.checklist import initialize_checklist_database; initialize_checklist_database()"
+
 # if $1 is passed
 if [[ $1 == "pong" ]]; then
     bot="pong"

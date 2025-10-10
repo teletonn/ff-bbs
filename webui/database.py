@@ -49,7 +49,10 @@ def init_db():
         last_attempt_time TIMESTAMP,
         next_retry_time TIMESTAMP,
         error_message TEXT,
-        defer_count INTEGER DEFAULT 0
+        defer_count INTEGER DEFAULT 0,
+        delivered BOOLEAN DEFAULT 0,
+        retry_count INTEGER DEFAULT 0,
+        delivery_attempts INTEGER DEFAULT 0
     )
     ''')
 
@@ -63,7 +66,8 @@ def init_db():
         node_id TEXT UNIQUE,
         email TEXT,
         role TEXT DEFAULT 'user',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        group_id INTEGER REFERENCES user_groups(id)
     )
     ''')
 
@@ -313,8 +317,6 @@ def init_db():
     if 'created_at' not in columns:
         cursor.execute("ALTER TABLE users ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
 
-    if 'group_id' not in columns:
-        cursor.execute("ALTER TABLE users ADD COLUMN group_id INTEGER REFERENCES user_groups(id)")
 
     # Ensure nodes table has all telemetry columns
     cursor.execute("PRAGMA table_info(nodes)")
@@ -344,9 +346,6 @@ def init_db():
 
     delivery_columns = {
         'status': "TEXT DEFAULT 'sent' CHECK (status IN ('sent', 'queued', 'delivered', 'undelivered'))",
-        'delivered': 'BOOLEAN DEFAULT 0',
-        'retry_count': 'INTEGER DEFAULT 0',
-        'delivery_attempts': 'INTEGER DEFAULT 0',
         'attempt_count': 'INTEGER DEFAULT 0',
         'last_attempt_time': 'TIMESTAMP',
         'next_retry_time': 'TIMESTAMP',

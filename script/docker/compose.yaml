@@ -12,6 +12,8 @@ services:
         target: /app/config.ini
     extra_hosts:
       - "host.docker.internal:host-gateway" # Used to access a local linux meshtasticd device via tcp
+    volumes:
+      - ./data:/app/data
   ollama:
     image: ollama/ollama:0.5.1
     volumes:
@@ -21,9 +23,9 @@ services:
     pull_policy: always
     tty: true
     restart: always
-    entrypoint: 
+    entrypoint:
       - /usr/bin/bash
-      - /script/docker/entrypoint.sh
+      - ./entrypoint.sh
     expose:
       - 11434
     healthcheck:
