@@ -2130,11 +2130,41 @@ async def message_resend_task():
 
 async def main():
     load_geofences_and_triggers()
+
+    # Initialize Telegram bot integration if enabled
+    telegram_integration = None
+    try:
+        # Check if Telegram bot integration is enabled by looking for bot token in config
+        telegram_bot_token = config.get('telegram', 'telegram_bot_token', fallback='')
+        if telegram_bot_token and telegram_bot_token != 'YOUR_TELEGRAM_BOT_TOKEN':
+            logger.info("Telegram bot integration enabled, initializing...")
+
+            # Import the integration module
+            from modules.meshgram_integration.meshgram import create_meshgram_integration
+
+            # Use interface1 as the primary Meshtastic interface for the integration
+            if interface1 is not None:
+                telegram_integration = await create_meshgram_integration(interface1)
+                logger.info("Telegram bot integration initialized successfully")
+            else:
+                logger.warning("Telegram bot integration enabled but no primary interface available")
+        else:
+            logger.debug("Telegram bot integration disabled or not configured")
+    except Exception as e:
+        logger.error(f"Failed to initialize Telegram bot integration: {e}")
+        logger.error("Continuing without Telegram integration")
+
     meshRxTask = asyncio.create_task(start_rx())
     watchdogTask = asyncio.create_task(watchdog())
     commandPollerTask = asyncio.create_task(command_poller())
     cleanupTask = asyncio.create_task(cleanup_task())
     reloadTask = asyncio.create_task(reload_task())
+
+    # Add Telegram integration task if available
+    telegram_task = None
+    if telegram_integration is not None:
+        telegram_task = asyncio.create_task(telegram_integration.start())
+
     if file_monitor_enabled:
         fileMonTask: asyncio.Task = asyncio.create_task(handleFileWatcher())
     if radio_detection_enabled:
@@ -2142,11 +2172,18 @@ async def main():
 
     nodeStatusTask = asyncio.create_task(node_status_check_task())
     messageResendTask = asyncio.create_task(message_resend_task())
-    await asyncio.gather(meshRxTask, watchdogTask, commandPollerTask, cleanupTask, reloadTask, nodeStatusTask, messageResendTask)
+
+    # Gather all tasks
+    tasks = [meshRxTask, watchdogTask, commandPollerTask, cleanupTask, reloadTask, nodeStatusTask, messageResendTask]
+
+    if telegram_task is not None:
+        tasks.append(telegram_task)
     if radio_detection_enabled:
-        await asyncio.gather(hamlibTask)
+        tasks.append(hamlibTask)
     if file_monitor_enabled:
-        await asyncio.gather(fileMonTask)
+        tasks.append(fileMonTask)
+
+    await asyncio.gather(*tasks)
 
     await asyncio.sleep(0.1)
 

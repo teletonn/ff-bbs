@@ -18,3 +18,5 @@ uvicorn
 jinja2
 python-multipart
 websockets
+envyaml
+python-telegram-bot
