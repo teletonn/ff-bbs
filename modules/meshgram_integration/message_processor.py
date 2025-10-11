@@ -141,15 +141,10 @@ class MessageProcessor:
         if isinstance(configured_channel, str):
             configured_channel = int(configured_channel)
 
-        # Broadcast messages from the configured default channel to Telegram (excluding telemetry data)
-        if channel == configured_channel and not self._is_telemetry_data(text):
+        # Only forward broadcast messages from the specified channel to Telegram (excluding telemetry data)
+        if channel == configured_channel and recipient == "^all" and not self._is_telemetry_data(text):
             message: str = f"📡 Meshtastic CH{configured_channel}: {sender} → {recipient}\n💬 {text}"
             self.logger.info(f"Broadcasting channel {configured_channel} message to Telegram: {message=}")
-            await self.telegram.send_message(message, disable_notification=False)
-        else:
-            # Handle messages from other channels (DMs, different channels, etc.)
-            message: str = f"📡 Meshtastic CH{channel}: {sender} → {recipient}\n💬 {text}"
-            self.logger.info(f"Sending Meshtastic message from channel {channel} to Telegram: {message=}")
             await self.telegram.send_message(message, disable_notification=False)
 
     async def handle_telegram_text(self, message: Dict[str, Any]) -> None:

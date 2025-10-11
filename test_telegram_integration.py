@@ -154,6 +154,7 @@ defaultChannel = 3
 
         # Create mock objects
         mock_config = Mock(spec=ConfigManager)
+        mock_config.get.side_effect = lambda *args, **kwargs: '' if args[0] == 'telegram.meshtastic_local_nodes' else Mock()
         mock_telegram = Mock(spec=TelegramInterface)
         mock_meshtastic = Mock(spec=MeshtasticInterface)
         mock_node_manager = Mock(spec=NodeManager)
@@ -189,6 +190,7 @@ defaultChannel = 3
 
         # Create mock objects
         mock_config = Mock(spec=ConfigManager)
+        mock_config.get.side_effect = lambda *args, **kwargs: '' if args[0] == 'telegram.meshtastic_local_nodes' else Mock()
         mock_telegram = Mock(spec=TelegramInterface)
         mock_meshtastic = Mock(spec=MeshtasticInterface)
         mock_node_manager = Mock(spec=NodeManager)

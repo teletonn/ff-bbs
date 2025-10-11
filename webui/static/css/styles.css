@@ -730,19 +730,18 @@ button:disabled, .btn:disabled {
     gap: 15px;
 }
 
+/* Hide hamburger menu on desktop */
+.hamburger-menu {
+    display: none;
+}
+
+/* Hide mobile navigation overlay on desktop */
+.mobile-nav-overlay {
+    display: none;
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
-    .sidebar {
-        width: 100%;
-        height: auto;
-        position: relative;
-    }
-
-    .main-content {
-        margin-left: 0;
-        padding: 20px;
-    }
-
     .stats-container {
         flex-direction: column;
     }

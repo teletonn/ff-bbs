@@ -177,11 +177,14 @@ def login_required(current_user: dict = Depends(get_current_user)):
 
 def render_template(template_name: str, request: Request, **kwargs):
     """Хелпер для рендеринга шаблонов с добавлением общих данных."""
+    user_agent = request.headers.get('User-Agent', '')
+    is_mobile = 'Android' in user_agent or 'iPhone' in user_agent or 'iPad' in user_agent or 'Mobile' in user_agent
     context = {
         "request": request,
         "menu_items": menu_items,
         "page_title": kwargs.get("page_title", "Дашборд"),
-        "is_authenticated": 'user_id' in request.session
+        "is_authenticated": 'user_id' in request.session,
+        "is_mobile": is_mobile
     }
     context.update(kwargs)
     return templates.TemplateResponse(template_name, context)
@@ -215,6 +218,55 @@ async def get_mobile_nodes_page(request: Request):
     """Отображает мобильную страницу со списком узлов сети."""
     nodes_list = get_nodes(request)
     return render_template("mobile/nodes.html", request, page_title="Ноды", nodes=nodes_list)
+
+@app.get("/mobile/alerts", response_class=HTMLResponse)
+async def get_mobile_alerts_page(request: Request, current_user: dict = Depends(login_required)):
+    """Отображает мобильную страницу оповещений."""
+    return render_template("mobile/alerts.html", request, page_title="Оповещения")
+
+@app.get("/mobile/processes", response_class=HTMLResponse)
+async def get_mobile_processes_page(request: Request, current_user: dict = Depends(login_required)):
+    """Отображает мобильную страницу автоматизированных процессов."""
+    return render_template("mobile/processes.html", request, page_title="Автоматизированные Процессы")
+
+@app.get("/mobile/settings", response_class=HTMLResponse)
+async def get_mobile_settings(request: Request, current_user: dict = Depends(login_required)):
+    """Отображает мобильную страницу настроек."""
+    settings = get_all_settings()
+    sections = {}
+    for key, value in settings.items():
+        if '.' in key:
+            sec, opt = key.split('.', 1)
+            if sec not in sections:
+                sections[sec] = {}
+            sections[sec][opt] = {'value': value, 'key': key}
+        else:
+            if 'default' not in sections:
+                sections['default'] = {}
+            sections['default'][key] = {'value': value, 'key': key}
+    return render_template("mobile/settings.html", request, page_title="Настройки", sections=sections)
+
+@app.get("/mobile/triggers", response_class=HTMLResponse)
+def get_mobile_triggers_page(request: Request):
+    """Отображает мобильную страницу управления триггерами."""
+    triggers_list = get_triggers(request)
+    return render_template("mobile/triggers.html", request, page_title="Триггеры", triggers=triggers_list)
+
+@app.get("/mobile/users", response_class=HTMLResponse)
+async def get_mobile_users_page(request: Request):
+    """Отображает мобильную страницу управления пользователями дашборда."""
+    users_list = get_users(request)
+    return render_template("mobile/users.html", request, page_title="Пользователи", users=users_list)
+
+@app.get("/mobile/zones", response_class=HTMLResponse)
+async def get_mobile_zones_page(request: Request, current_user: dict = Depends(login_required)):
+    """Отображает мобильную страницу гео-зон."""
+    return render_template("mobile/zones.html", request, page_title="Гео-зоны")
+
+@app.get("/mobile/alert_config", response_class=HTMLResponse)
+async def get_mobile_alert_config_page(request: Request, current_user: dict = Depends(login_required)):
+    """Отображает мобильную страницу конфигурации оповещений."""
+    return render_template("mobile/alert_config.html", request, page_title="Конфигурация Оповещений")
 
 @app.get("/users", response_class=HTMLResponse)
 async def get_users_page(request: Request):

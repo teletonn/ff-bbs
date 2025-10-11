@@ -1,5 +1,18 @@
 /* Mobile-specific styles - Dark, Modern, Concise */
 
+/* Screen reader only text */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
 /* Override root variables for darker theme with modern enhancements */
 :root {
     --background-color: #000000;
@@ -274,7 +287,7 @@ input, select, textarea {
     position: fixed;
     top: 15px;
     right: 15px;
-    z-index: 1003;
+    z-index: 2147483647;
     background: var(--glass-bg);
     backdrop-filter: blur(var(--blur-intensity));
     -webkit-backdrop-filter: blur(var(--blur-intensity));
@@ -310,7 +323,7 @@ input, select, textarea {
     background: rgba(0, 0, 0, 0.8);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
-    z-index: 1002;
+    z-index: 2147483646;
     display: none;
     opacity: 0;
     transition: opacity 0.3s ease;
@@ -352,10 +365,15 @@ input, select, textarea {
     padding: 5px;
     border-radius: 50%;
     transition: background 0.2s ease;
+    display: none;
 }
 
 .close-nav:hover {
     background: var(--hover-bg);
+}
+
+.mobile-nav-overlay.active .close-nav {
+    display: block;
 }
 
 .mobile-nav-menu ul {

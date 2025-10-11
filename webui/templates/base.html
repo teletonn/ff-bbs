@@ -16,7 +16,7 @@
             <ul>
                 {% for name, path in menu_items %}
                 <li>
-                    <a href="{{ path }}" class="{{ 'active' if request.url.path == path else '' }}">
+                    <a href="{% if is_mobile and path in ['/nodes', '/alerts', '/processes', '/settings', '/triggers', '/users', '/zones', '/alert_config'] %}/mobile{{ path }}{% else %}{{ path }}{% endif %}" class="{{ 'active' if request.url.path == path or (is_mobile and request.url.path == '/mobile' + path) else '' }}">
                         {{ name }}
                     </a>
                 </li>
@@ -26,21 +26,22 @@
     </aside>
 
     <!-- Hamburger Menu Button -->
-    <button id="hamburger-menu" class="hamburger-menu" aria-label="Open navigation menu">
+    <button id="hamburger-menu" class="hamburger-menu" aria-label="Toggle navigation menu" aria-expanded="false">
       <span class="hamburger-line"></span>
       <span class="hamburger-line"></span>
       <span class="hamburger-line"></span>
     </button>
 
     <!-- Mobile Navigation Overlay -->
-    <div id="mobile-nav-overlay" class="mobile-nav-overlay">
+    <div id="mobile-nav-overlay" class="mobile-nav-overlay" role="dialog" aria-modal="true" aria-labelledby="mobile-nav-title" aria-hidden="true">
       <div class="mobile-nav-content">
-        <button id="close-nav" class="close-nav">&times;</button>
-        <nav class="mobile-nav-menu">
+        <h2 id="mobile-nav-title" class="sr-only">Navigation Menu</h2>
+        <button id="close-nav" class="close-nav" aria-label="Close navigation menu">&times;</button>
+        <nav class="mobile-nav-menu" role="navigation" aria-label="Main navigation">
           <ul>
             {% for name, path in menu_items %}
             <li>
-              <a href="{{ path }}" class="{% if request.url.path == path %}active{% endif %}">{{ name }}</a>
+              <a href="{% if is_mobile and path in ['/nodes', '/alerts', '/processes', '/settings', '/triggers', '/users', '/zones', '/alert_config'] %}/mobile{{ path }}{% else %}{{ path }}{% endif %}" class="{% if request.url.path == path or (is_mobile and request.url.path == '/mobile' + path) %}active{% endif %}">{{ name }}</a>
             </li>
             {% endfor %}
           </ul>
