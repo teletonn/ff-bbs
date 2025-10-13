@@ -82,6 +82,7 @@ cp etc/pong_bot.tmp etc/pong_bot.service
 cp etc/mesh_bot.tmp etc/mesh_bot.service
 cp etc/mesh_bot_reporting.tmp etc/mesh_bot_reporting.service
 cp etc/mesh_bot_w3.tmp etc/mesh_bot_w3.service
+cp etc/coingecko_bot.tmp etc/coingecko_bot.service
 
 # generate config file, check if it exists
 if [[ -f config.ini ]]; then
@@ -142,6 +143,8 @@ else
             sed -i "$replace" etc/mesh_bot.service
             replace="s|python3 pong_bot.py|/usr/bin/bash launch.sh pong|g"
             sed -i "$replace" etc/pong_bot.service
+            replace="s|python3 crypto_alert.py|/usr/bin/bash launch.sh coingecko|g"
+            sed -i "$replace" etc/coingecko_bot.service
 
             # install dependencies to venv
             pip install -U -r requirements.txt
@@ -166,11 +169,14 @@ if [[ $1 == "pong" ]]; then
     bot="pong"
 elif [[ $1 == "mesh" ]] || [[ $(echo "${embedded}" | grep -i "^y") ]]; then
     bot="mesh"
+elif [[ $1 == "coingecko" ]]; then
+    bot="coingecko"
 else
     printf "\n\n"
-    echo "Which bot do you want to install as a service? Pong Mesh or None? (pong/mesh/n)"
+    echo "Which bot do you want to install as a service? Pong, Mesh, Coingecko or None? (pong/mesh/coingecko/n)"
     echo "Pong bot is a simple bot for network testing"
     echo "Mesh bot is a more complex bot more suited for meshing around"
+    echo "Coingecko bot is for crypto price alerts"
     echo "None will skip the service install"
     read bot
 fi
@@ -181,6 +187,7 @@ sed -i $replace etc/pong_bot.service
 sed -i $replace etc/mesh_bot.service
 sed -i $replace etc/mesh_bot_reporting.service
 sed -i $replace etc/mesh_bot_w3.service
+sed -i $replace etc/coingecko_bot.service
 # set the correct user in the service file?
 
 #ask if we should add a user for the bot
@@ -215,11 +222,13 @@ sed -i $replace etc/pong_bot.service
 sed -i $replace etc/mesh_bot.service
 sed -i $replace etc/mesh_bot_reporting.service
 sed -i $replace etc/mesh_bot_w3.service
+sed -i $replace etc/coingecko_bot.service
 replace="s|Group=pi|Group=$whoami|g"
 sed -i $replace etc/pong_bot.service
 sed -i $replace etc/mesh_bot.service
 sed -i $replace etc/mesh_bot_reporting.service
 sed -i $replace etc/mesh_bot_w3.service
+sed -i $replace etc/coingecko_bot.service
 printf "\n service files updated\n"
 
 if [[ $(echo "${bot}" | grep -i "^p") ]]; then
@@ -238,6 +247,15 @@ if [[ $(echo "${bot}" | grep -i "^m") ]]; then
     sudo systemctl daemon-reload
     echo "to start mesh bot service: systemctl start mesh_bot"
     service="mesh_bot"
+fi
+
+if [[ $(echo "${bot}" | grep -i "^c") ]]; then
+    # install service for coingecko bot
+    sudo cp etc/coingecko_bot.service /etc/systemd/system/
+    sudo systemctl enable coingecko_bot.service
+    sudo systemctl daemon-reload
+    echo "to start coingecko bot service: systemctl start coingecko_bot"
+    service="coingecko_bot"
 fi
 
 # check if running on embedded for final steps

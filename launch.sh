@@ -24,6 +24,7 @@ PIDS=()
 run_legacy_command=false
 start_mesh=false
 start_webui=false
+start_coingecko=false
 
 # Handle legacy commands if they are the only argument
 if [ "$#" -eq 1 ]; then
@@ -58,6 +59,9 @@ for arg in "$@"; do
         webui)
             start_webui=true
             ;;
+        coingecko)
+            start_coingecko=true
+            ;;
     esac
 done
 
@@ -76,6 +80,13 @@ if [ "$start_webui" = true ]; then
     PIDS+=($!)
 fi
 
+# Start CoinGecko bot if requested
+if [ "$start_coingecko" = true ]; then
+    echo "Starting CoinGecko Crypto Alert Bot in the background..."
+    python3 crypto_alert.py &
+    PIDS+=($!)
+fi
+
 # If we started any background processes, wait for them
 if [ ${#PIDS[@]} -gt 0 ]; then
     echo "Services are running. Press Ctrl+C to stop all services."
@@ -85,9 +96,10 @@ if [ ${#PIDS[@]} -gt 0 ]; then
 else
     # If no valid arguments were provided and no legacy command was run
     if [ "$run_legacy_command" = false ]; then
-        echo "Usage: $0 [mesh] [webui]"
+        echo "Usage: $0 [mesh] [webui] [coingecko]"
         echo "  mesh      - Start the mesh bot."
         echo "  webui     - Start the web dashboard."
+        echo "  coingecko - Start the CoinGecko crypto alert bot."
         echo
         echo "Legacy commands (use only one):"
         echo "  $0 <pong|html|html5|addfav>"

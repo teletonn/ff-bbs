@@ -16,6 +16,7 @@ redis
 fastapi
 uvicorn
 jinja2
+pycoingecko
 python-multipart
 websockets
 envyaml

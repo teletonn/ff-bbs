@@ -1,0 +1,26 @@
+# /etc/systemd/system/coingecko_bot.service
+# sudo systemctl daemon-reload
+# sudo systemctl enable coingecko_bot.service
+# sudo systemctl start coingecko_bot.service
+
+[Unit]
+Description=COINGECKO-BOT
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/dir/
+ExecStart=python3 crypto_alert.py
+ExecStop=pkill -f crypto_alert.py
+
+# Disable Python's buffering of STDOUT and STDERR, so that output from the
+# service shows up immediately in systemd's logs
+Environment=PYTHONUNBUFFERED=1
+
+Restart=on-failure
+Type=notify #try simple if any problems
+
+[Install]
+WantedBy=default.target
