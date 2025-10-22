@@ -31,12 +31,17 @@ class NodeManager:
         self.node_history: Dict[str, List[NodeData]] = {}
         self.history_limit: int = 100
 
+    def get_node_id(self, node_id: Union[str, int]) -> int:
+        """Convert node ID string to numeric ID."""
+        if isinstance(node_id, str) and node_id.startswith('!'):
+            return int(node_id[1:], 16)
+        elif isinstance(node_id, str):
+            return int(node_id)
+        else:
+            return node_id
+
     def format_node_name(self, node_id: Union[str, int], short_name: str) -> str:
-        numeric_id: int = (
-            int(node_id[1:], 16) if isinstance(node_id, str) and node_id.startswith('!')
-            else int(node_id) if isinstance(node_id, str)
-            else node_id
-        )
+        numeric_id: int = self.get_node_id(node_id)
         return f'[{self.escape_value(node_id)} ({self.escape_value(short_name)})](https://meshtastic.liamcottle.net/?node_id={numeric_id})'
 
     def format_node_info(self, node_id: str) -> str:
@@ -152,6 +157,23 @@ class NodeManager:
 
     def validate_node_id(self, node_id: str) -> bool:
         return len(node_id) == 8 and all(c in '0123456789abcdefABCDEF' for c in node_id)
+
+    def validate_node_id_for_registration(self, node_id: str) -> tuple[bool, str]:
+        """
+        Validate node ID format for registration: ! followed by 8 hexadecimal digits.
+        Returns (is_valid, error_message).
+        """
+        if not node_id.startswith('!'):
+            return False, "Node ID must start with '!' (e.g., !12345678)"
+
+        hex_part = node_id[1:]
+        if len(hex_part) != 8:
+            return False, "Node ID must have exactly 8 hexadecimal digits after '!' (e.g., !12345678)"
+
+        if not all(c in '0123456789abcdefABCDEF' for c in hex_part):
+            return False, "Node ID must contain only hexadecimal digits (0-9, A-F) after '!' (e.g., !12345678)"
+
+        return True, ""
 
     def update_node_telemetry(self, node_id: str, telemetry_data: Dict[str, Any]) -> None:
         self.update_node(node_id, telemetry_data)

@@ -12,6 +12,7 @@ from modules.meshgram_integration.telegram_interface import TelegramInterface
 from modules.meshgram_integration.config_manager import ConfigManager
 from modules import log
 from modules.meshgram_integration.node_manager import NodeManager
+from webui.db_handler import register_or_update_telegram_user
 
 class CommandHandler(Protocol):
     async def __call__(self, args: list[str], user_id: int, update: Update) -> None:
@@ -39,6 +40,8 @@ class TelegramMessage(TypedDict):
 class PendingAck(TypedDict):
     telegram_message_id: int
     timestamp: datetime
+    text: str
+    recipient: str
 
 class MessageProcessor:
     def __init__(self, meshtastic: MeshtasticInterface, telegram: TelegramInterface, config: ConfigManager) -> None:
@@ -55,7 +58,7 @@ class MessageProcessor:
         self.message_id_map: dict[int, str] = {}
         self.reverse_message_id_map: dict[str, int] = {}
         self.pending_acks: dict[int, PendingAck] = {}
-        self.ack_timeout: int = 60  # seconds
+        self.ack_timeout: int = 30  # seconds
         self.bell_rate_limit: dict[int, datetime] = {}  # Track bell command usage per user
         self.bell_cooldown_seconds: int = 120  # 2 minutes cooldown for non-authorized users
 
@@ -115,7 +118,15 @@ class MessageProcessor:
                 self.logger.warning(f"Unhandled Meshtastic message type: {portnum=} from: {packet.get('fromId')=}")
 
     async def handle_ack(self, packet: Dict[str, Any]) -> None:
-        message_id = packet.get('id')
+        from_id = packet.get('fromId')
+        to_id = packet.get('toId')
+
+        # Ignore self-ACKs where fromId == toId
+        if from_id == to_id:
+            self.logger.debug(f"Ignoring self-ACK from {from_id} to {to_id}")
+            return
+
+        message_id = packet.get('message_id')
         if message_id is None:
             self.logger.warning("Received ACK without message ID")
             return
@@ -174,12 +185,14 @@ class MessageProcessor:
         meshtastic_message = f"[TG:{sender}] {text}"
         self.logger.info(f"Preparing to send Telegram message to Meshtastic: {meshtastic_message} -> {recipient}")
         try:
-            meshtastic_message_id = await self.meshtastic.send_message(meshtastic_message, recipient)
+            meshtastic_message_id = (await self.meshtastic.send_message(meshtastic_message, recipient))['id']
             self.logger.info(f"Successfully sent message to Meshtastic: {meshtastic_message} -> {recipient}")
 
             self.pending_acks[meshtastic_message_id] = {
                 'telegram_message_id': telegram_message_id,
-                'timestamp': datetime.now(timezone.utc)
+                'timestamp': datetime.now(timezone.utc),
+                'text': meshtastic_message,
+                'recipient': recipient
             }
 
             asyncio.create_task(self.remove_pending_ack(meshtastic_message_id))
@@ -198,8 +211,28 @@ class MessageProcessor:
             now = datetime.now(timezone.utc)
             for message_id, data in list(self.pending_acks.items()):
                 if (now - data['timestamp']).total_seconds() > self.ack_timeout:
-                    self.logger.warning(f"ACK timeout for message ID: {message_id}")
-                    del self.pending_acks[message_id]
+                    self.logger.warning(f"ACK timeout for message ID: {message_id}, retrying...")
+                    try:
+                        # Resend the message
+                        new_message_id = (await self.meshtastic.send_message(data['text'], data['recipient']))['id']
+                        # Update the pending ACK with new message ID and reset timestamp
+                        self.pending_acks[new_message_id] = {
+                            'telegram_message_id': data['telegram_message_id'],
+                            'timestamp': datetime.now(timezone.utc),
+                            'text': data['text'],
+                            'recipient': data['recipient']
+                        }
+                        # Remove the old entry
+                        del self.pending_acks[message_id]
+                        self.logger.info(f"Retried message for Telegram ID: {data['telegram_message_id']}, new Meshtastic ID: {new_message_id}")
+                    except Exception as e:
+                        self.logger.error(f"Failed to retry message for Telegram ID: {data['telegram_message_id']}: {e}")
+                        # On retry failure, mark as delivered to avoid infinite retries
+                        telegram_message_id = data.get('telegram_message_id')
+                        if telegram_message_id:
+                            await self.telegram.add_reaction(telegram_message_id, '✅')
+                            self.logger.info(f"Marked as delivered after retry failure for Telegram ID: {telegram_message_id}")
+                        del self.pending_acks[message_id]
             await asyncio.sleep(10)  # Check every 10 seconds
 
     async def handle_telegram_message(self, message: TelegramMessage) -> None:
@@ -273,18 +306,22 @@ class MessageProcessor:
             user_id = message.get('user_id')
             update = message.get('update')
 
+            self.logger.info(f"handle_telegram_command called with command: {command}, args: {args}, user_id: {user_id}")
+
             if not user_id or not update:
                 self.logger.error("Missing user_id or update in command message")
                 return
 
             # Check if this is a DM (not a group message)
             is_dm = update.message.chat.type == 'private'
+            self.logger.info(f"Command received in {'DM' if is_dm else 'group'} chat")
 
             # Commands allowed in DM for unauthorized users
-            dm_allowed_commands = ['start', 'help', 'user']
+            dm_allowed_commands = ['start', 'help', 'user', 'reg']
 
             # Check authorization for DM messages
             if is_dm and not self.telegram.is_user_authorized(user_id) and command not in dm_allowed_commands:
+                self.logger.warning(f"Unauthorized DM command attempt: /{command} by user {user_id}")
                 await update.message.reply_text(
                     "❌ Unauthorized DM usage. Only /start, /help, and /user commands are available in DM for unauthorized users.\n\n"
                     "Please use group chat for other commands or contact an administrator for authorization."
@@ -293,13 +330,16 @@ class MessageProcessor:
 
             # Check authorization for group messages (existing logic)
             if not is_dm and not self.telegram.is_user_authorized(user_id) and command not in ['start', 'help', 'user']:
+                self.logger.warning(f"Unauthorized group command attempt: /{command} by user {user_id}")
                 await update.message.reply_text("You are not authorized to use this command.")
                 return
 
             handler = getattr(self, f"cmd_{command}", None)
             if handler:
+                self.logger.info(f"Found handler for command /{command}, calling handler")
                 await handler(args, user_id, update)
             else:
+                self.logger.warning(f"No handler found for command /{command}")
                 await update.message.reply_text(f"Unknown command: {command}")
         except Exception as e:
             self.logger.error(f'Error handling Telegram command: {e}', exc_info=True)
@@ -455,6 +495,71 @@ class MessageProcessor:
             f"Is Authorized: {'Yes' if self.telegram.is_user_authorized(user.id) else 'No'}"
         )
         await update.message.reply_text(escape_markdown(user_info, version=2), parse_mode=ParseMode.MARKDOWN_V2)
+
+    async def cmd_reg(self, args: list[str], user_id: int, update: Update) -> None:
+        """Handle /reg !nodeid command for user registration."""
+        self.logger.info(f"cmd_reg called with args: {args}, user_id: {user_id}")
+
+        if not args:
+            self.logger.warning("cmd_reg called without arguments")
+            await update.message.reply_text(
+                escape_markdown("Usage: /reg !nodeid - Register with your Meshtastic node ID", version=2),
+                parse_mode=ParseMode.MARKDOWN_V2
+            )
+            return
+
+        node_id_str = args[0]
+        self.logger.info(f"Processing registration for node_id_str: {node_id_str}")
+
+        # Validate node ID format using the new validation function
+        is_valid, error_message = self.node_manager.validate_node_id_for_registration(node_id_str)
+        if not is_valid:
+            self.logger.warning(f"Invalid node ID format: {error_message}")
+            await update.message.reply_text(
+                escape_markdown(f"❌ Invalid node ID format: {error_message}", version=2),
+                parse_mode=ParseMode.MARKDOWN_V2
+            )
+            return
+
+        mesh_node_id = node_id_str[1:]  # Remove the ! prefix for storage
+        self.logger.info(f"Validated mesh_node_id: {mesh_node_id}")
+
+        # Get Telegram user info
+        telegram_user = update.effective_user
+        telegram_id = telegram_user.id
+        first_name = telegram_user.first_name
+        last_name = telegram_user.last_name
+        username = telegram_user.username
+        self.logger.info(f"Telegram user info - id: {telegram_id}, first_name: {first_name}, username: {username}")
+
+        try:
+            # Register or update user in database
+            self.logger.info(f"Calling register_or_update_telegram_user with telegram_id={telegram_id}, mesh_node_id={mesh_node_id}")
+            user_db_id, was_created, was_updated = register_or_update_telegram_user(
+                telegram_id=telegram_id,
+                mesh_node_id=mesh_node_id,
+                first_name=first_name,
+                last_name=last_name,
+                username=username
+            )
+            self.logger.info(f"register_or_update_telegram_user returned: user_db_id={user_db_id}, was_created={was_created}, was_updated={was_updated}")
+
+            if was_created:
+                response = f"✅ Registration successful! You are now registered with node ID {node_id_str}.\n\nWelcome to the Meshgram network!"
+            elif was_updated:
+                response = f"✅ Registration updated! Your node ID has been changed to {node_id_str}."
+            else:
+                response = f"ℹ️ You are already registered with node ID {node_id_str}. No changes made."
+
+            self.logger.info(f"Sending response: {response}")
+            await update.message.reply_text(escape_markdown(response, version=2), parse_mode=ParseMode.MARKDOWN_V2)
+
+        except Exception as e:
+            self.logger.error(f"Error registering user {telegram_id} with node {mesh_node_id}: {e}", exc_info=True)
+            await update.message.reply_text(
+                escape_markdown("❌ Registration failed. Please try again later.", version=2),
+                parse_mode=ParseMode.MARKDOWN_V2
+            )
 
     async def get_status(self) -> str:
         uptime: timedelta = datetime.now(timezone.utc) - self.start_time

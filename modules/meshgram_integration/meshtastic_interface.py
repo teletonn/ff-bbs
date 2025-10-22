@@ -91,21 +91,28 @@ class MeshtasticInterface:
         except Exception as e:
             self.logger.error(f"Error sending reaction to Meshtastic: {e=}", exc_info=True)
 
-    async def send_message(self, text: str, recipient: str) -> None:
+    async def send_message(self, text: str, recipient: str) -> str:
         if not text or not recipient:
             raise ValueError("Text and recipient must not be empty")
         if len(text) > 230:  # Meshtastic message size limit
             raise ValueError("Message too long")
 
+        # Convert recipient to numeric ID
+        numeric_recipient = self.node_manager.get_node_id(recipient)
+
         self.logger.info(f"Attempting to send message to Meshtastic: {text=}")
         try:
-            self.logger.debug(f"Sending message to Meshtastic with {recipient=}")
-            result = await asyncio.to_thread(self.interface.sendText, text, destinationId=recipient)
+            # Add 1-second delay to allow route establishment
+            await asyncio.sleep(1)
+            self.logger.debug(f"Sending message to Meshtastic with {recipient=} (numeric: {numeric_recipient})")
+            result = await asyncio.to_thread(self.interface.sendText, text, destinationId=numeric_recipient, wantAck=True)
             self.logger.info(f"Message sent to Meshtastic: {text=}")
             self.logger.debug(f"{result=}")
+            return result
         except Exception as e:
             self.logger.error(f"Error sending message to Meshtastic: {e=}", exc_info=True)
             self.pending_messages.append(PendingMessage(text, recipient))
+            raise
 
     async def send_bell(self, dest_id: str) -> None:
         if not dest_id:

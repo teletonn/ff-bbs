@@ -60,14 +60,20 @@ def init_db():
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE NOT NULL,
-        password TEXT NOT NULL,
+        username TEXT UNIQUE,
+        password TEXT,
         nickname TEXT,
         node_id TEXT UNIQUE,
         email TEXT,
         role TEXT DEFAULT 'user',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        group_id INTEGER REFERENCES user_groups(id)
+        group_id INTEGER REFERENCES user_groups(id),
+        telegram_id INTEGER UNIQUE,
+        telegram_first_name TEXT,
+        telegram_last_name TEXT,
+        telegram_username TEXT,
+        mesh_node_id TEXT UNIQUE,
+        is_active BOOLEAN DEFAULT 1
     )
     ''')
 
@@ -316,6 +322,32 @@ def init_db():
     
     if 'created_at' not in columns:
         cursor.execute("ALTER TABLE users ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+
+    if 'telegram_id' not in columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN telegram_id INTEGER")
+        try:
+            cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_telegram_id ON users(telegram_id)")
+        except sqlite3.OperationalError:
+            pass
+
+    if 'telegram_first_name' not in columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN telegram_first_name TEXT")
+
+    if 'telegram_last_name' not in columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN telegram_last_name TEXT")
+
+    if 'telegram_username' not in columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN telegram_username TEXT")
+
+    if 'mesh_node_id' not in columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN mesh_node_id TEXT")
+        try:
+            cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_mesh_node_id ON users(mesh_node_id)")
+        except sqlite3.OperationalError:
+            pass
+
+    if 'is_active' not in columns:
+        cursor.execute("ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT 1")
 
 
     # Ensure nodes table has all telemetry columns

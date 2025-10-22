@@ -508,6 +508,47 @@ def register_user(username, password, nickname=None, node_id=None, email=None, r
     finally:
         conn.close()
 
+@retry_on_lock()
+def register_or_update_telegram_user(telegram_id, mesh_node_id, first_name=None, last_name=None, username=None):
+    """Register or update a Telegram user with mesh node association.
+    Returns (user_id, was_created, was_updated) tuple."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+
+        # Check if user already exists by telegram_id
+        cursor.execute("SELECT id, mesh_node_id FROM users WHERE telegram_id = ?", (telegram_id,))
+        existing_user = cursor.fetchone()
+
+        if existing_user:
+            user_id, current_mesh_node_id = existing_user
+            # Check if mesh_node_id needs updating
+            if current_mesh_node_id != mesh_node_id:
+                cursor.execute("""
+                    UPDATE users
+                    SET mesh_node_id = ?, telegram_first_name = ?, telegram_last_name = ?, telegram_username = ?, is_active = 1
+                    WHERE telegram_id = ?
+                """, (mesh_node_id, first_name, last_name, username, telegram_id))
+                conn.commit()
+                return user_id, False, True  # exists, updated
+            else:
+                # Ensure user is active
+                cursor.execute("UPDATE users SET is_active = 1 WHERE telegram_id = ?", (telegram_id,))
+                conn.commit()
+                return user_id, False, False  # exists, no change needed
+        else:
+            # Create new user record - username is optional for telegram users, generate a unique one
+            if not username:
+                username = f"telegram_{telegram_id}"
+            cursor.execute("""
+                INSERT INTO users (telegram_id, mesh_node_id, telegram_first_name, telegram_last_name, telegram_username, username, password, is_active, role)
+                VALUES (?, ?, ?, ?, ?, ?, '', 1, 'user')
+            """, (telegram_id, mesh_node_id, first_name, last_name, username, username))
+            conn.commit()
+            return cursor.lastrowid, True, False  # created, not updated
+    finally:
+        conn.close()
+
 def authenticate_user(username, password):
     """Authenticate user by username and password, returns user dict or None."""
     conn = get_db_connection()
@@ -527,7 +568,7 @@ def get_users(request=None):
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
-        cursor.execute("SELECT id, username, nickname, node_id, email, role, created_at FROM users ORDER BY created_at DESC")
+        cursor.execute("SELECT id, username, nickname, node_id, email, role, created_at, telegram_id, telegram_first_name, telegram_last_name, telegram_username, mesh_node_id, is_active FROM users ORDER BY created_at DESC")
         rows = cursor.fetchall()
         columns = [description[0] for description in cursor.description]
         return [dict(zip(columns, row)) for row in rows]

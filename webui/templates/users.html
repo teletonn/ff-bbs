@@ -18,11 +18,35 @@
       </div>
       <div style="margin-bottom: 15px;">
         <label for="editNodeId">ID узла:</label>
-        <input type="text" id="editNodeId" name="node_id">
+        <input type="text" id="editNodeId" name="node_id" pattern="^\d+$" title="Node ID должен содержать только цифры">
       </div>
       <div style="margin-bottom: 15px;">
         <label for="editEmail">Email:</label>
         <input type="email" id="editEmail" name="email">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="editTelegramId">Telegram ID:</label>
+        <input type="number" id="editTelegramId" name="telegram_id">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="editTelegramFirstName">Telegram Имя:</label>
+        <input type="text" id="editTelegramFirstName" name="telegram_first_name">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="editTelegramLastName">Telegram Фамилия:</label>
+        <input type="text" id="editTelegramLastName" name="telegram_last_name">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="editTelegramUsername">Telegram Username:</label>
+        <input type="text" id="editTelegramUsername" name="telegram_username">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="editMeshNodeId">Mesh Node ID:</label>
+        <input type="text" id="editMeshNodeId" name="mesh_node_id" pattern="^![0-9a-fA-F]{8}$" title="Mesh Node ID должен быть в формате !12345678 (восклицательный знак, за которым следуют 8 шестнадцатеричных цифр)">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="editIsActive">Активен:</label>
+        <input type="checkbox" id="editIsActive" name="is_active" checked>
       </div>
       <div style="margin-bottom: 15px;">
         <label for="editRole">Роль:</label>
@@ -32,6 +56,61 @@
         </select>
       </div>
       <button type="submit">Обновить</button>
+    </form>
+  </div>
+</div>
+
+<!-- Modal for manual user registration -->
+<div id="registerModal" class="modal">
+  <div class="modal-content">
+    <span id="closeRegisterModal" class="close">&times;</span>
+    <h2>Регистрация нового пользователя</h2>
+    <form id="registerForm">
+      <div style="margin-bottom: 15px;">
+        <label for="registerUsername">Имя пользователя:</label>
+        <input type="text" id="registerUsername" name="username" required>
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="registerPassword">Пароль:</label>
+        <input type="password" id="registerPassword" name="password" required>
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="registerNickname">Псевдоним:</label>
+        <input type="text" id="registerNickname" name="nickname">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="registerNodeId">ID узла:</label>
+        <input type="text" id="registerNodeId" name="node_id" pattern="^\d+$" title="Node ID должен содержать только цифры">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="registerEmail">Email:</label>
+        <input type="email" id="registerEmail" name="email">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="registerTelegramId">Telegram ID:</label>
+        <input type="number" id="registerTelegramId" name="telegram_id">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="registerTelegramFirstName">Telegram Имя:</label>
+        <input type="text" id="registerTelegramFirstName" name="telegram_first_name">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="registerTelegramLastName">Telegram Фамилия:</label>
+        <input type="text" id="registerTelegramLastName" name="telegram_last_name">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="registerTelegramUsername">Telegram Username:</label>
+        <input type="text" id="registerTelegramUsername" name="telegram_username">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="registerMeshNodeId">Mesh Node ID:</label>
+        <input type="text" id="registerMeshNodeId" name="mesh_node_id" pattern="^![0-9a-fA-F]{8}$" title="Mesh Node ID должен быть в формате !12345678 (восклицательный знак, за которым следуют 8 шестнадцатеричных цифр)">
+      </div>
+      <div style="margin-bottom: 15px;">
+        <label for="registerIsActive">Активен:</label>
+        <input type="checkbox" id="registerIsActive" name="is_active" checked>
+      </div>
+      <button type="submit">Зарегистрировать</button>
     </form>
   </div>
 </div>
@@ -100,8 +179,9 @@
 
 <!-- Users Management Section -->
 <div class="glass-card">
-  <h2>Управление пользователями</h2>
-  <div id="loading" class="loading">Загрузка пользователей...</div>
+   <h2>Управление пользователями</h2>
+   <button id="registerUserBtn">Регистрация нового пользователя</button>
+   <div id="loading" class="loading">Загрузка пользователей...</div>
   <table id="users-table" style="display: none;">
     <thead>
       <tr>
@@ -109,6 +189,12 @@
         <th>Псевдоним</th>
         <th>ID узла</th>
         <th>Email</th>
+        <th>Telegram ID</th>
+        <th>Telegram Имя</th>
+        <th>Telegram Фамилия</th>
+        <th>Telegram Username</th>
+        <th>Mesh Node ID</th>
+        <th>Активен</th>
         <th>Роль</th>
         <th>Группы</th>
         <th>Создано</th>
@@ -129,6 +215,11 @@ document.addEventListener('DOMContentLoaded', function() {
   const closeEditModal = document.getElementById('closeEditModal');
   const editForm = document.getElementById('editForm');
 
+  // Register modal elements
+  const registerModal = document.getElementById('registerModal');
+  const closeRegisterModal = document.getElementById('closeRegisterModal');
+  const registerForm = document.getElementById('registerForm');
+
   // Groups modal elements
   const groupsModal = document.getElementById('groupsModal');
   const closeGroupsModal = document.getElementById('closeGroupsModal');
@@ -140,11 +231,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // Modal event listeners
   closeEditModal.onclick = () => editModal.style.display = 'none';
+  closeRegisterModal.onclick = () => registerModal.style.display = 'none';
   closeGroupsModal.onclick = () => groupsModal.style.display = 'none';
   closeEditGroupModal.onclick = () => editGroupModal.style.display = 'none';
 
   window.onclick = function(event) {
     if (event.target == editModal) editModal.style.display = 'none';
+    if (event.target == registerModal) registerModal.style.display = 'none';
     if (event.target == groupsModal) groupsModal.style.display = 'none';
     if (event.target == editGroupModal) editGroupModal.style.display = 'none';
   }
@@ -159,6 +252,12 @@ document.addEventListener('DOMContentLoaded', function() {
       nickname: formData.get('nickname') || null,
       node_id: formData.get('node_id') || null,
       email: formData.get('email') || null,
+      telegram_id: formData.get('telegram_id') || null,
+      telegram_first_name: formData.get('telegram_first_name') || null,
+      telegram_last_name: formData.get('telegram_last_name') || null,
+      telegram_username: formData.get('telegram_username') || null,
+      mesh_node_id: formData.get('mesh_node_id') || null,
+      is_active: document.getElementById('editIsActive').checked ? 1 : 0,
       role: formData.get('role')
     };
 
@@ -178,6 +277,49 @@ document.addEventListener('DOMContentLoaded', function() {
         loadUsers();
       } else {
         alert('Обновление не удалось');
+      }
+    })
+    .catch(err => {
+      alert('Error: ' + err.message);
+    });
+  };
+
+  // Register form submission
+  registerForm.onsubmit = function(e) {
+    e.preventDefault();
+    const formData = new FormData(registerForm);
+    const data = {
+      username: formData.get('username'),
+      password: formData.get('password'),
+      nickname: formData.get('nickname') || null,
+      node_id: formData.get('node_id') || null,
+      email: formData.get('email') || null,
+      telegram_id: formData.get('telegram_id') || null,
+      telegram_first_name: formData.get('telegram_first_name') || null,
+      telegram_last_name: formData.get('telegram_last_name') || null,
+      telegram_username: formData.get('telegram_username') || null,
+      mesh_node_id: formData.get('mesh_node_id') || null,
+      is_active: document.getElementById('registerIsActive').checked ? 1 : 0,
+      role: 'user'  // Registration always creates users, admin role only via edit
+    };
+
+    fetch('/api/v1/users/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    })
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    })
+    .then(result => {
+      if (result.success) {
+        alert('Пользователь зарегистрирован успешно');
+        registerModal.style.display = 'none';
+        registerForm.reset();
+        loadUsers();
+      } else {
+        alert('Регистрация не удалась');
       }
     })
     .catch(err => {
@@ -221,6 +363,11 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   };
 
+  // Register user button
+  document.getElementById('registerUserBtn').onclick = () => {
+    registerModal.style.display = 'block';
+  };
+
   // Create group button
   document.getElementById('createGroupBtn').onclick = () => showEditGroupModal();
 
@@ -252,6 +399,68 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   };
 
+    fetch('/api/v1/users')
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to fetch users`);
+        return res.json();
+      })
+      .then(data => {
+        console.log('Retrieved users data:', data); // Debug log
+        const tbody = document.getElementById('users-body');
+        tbody.innerHTML = '';
+        if (data.length === 0) {
+          document.getElementById('no-users').style.display = 'block';
+        } else {
+          Promise.all(data.map(user => fetch(`/api/v1/users/${user.id}/groups`).then(res => res.json())))
+          .then(groupsData => {
+            data.forEach((user, index) => {
+              console.log('Processing user:', user); // Debug log for each user
+              const row = tbody.insertRow();
+              row.insertCell(0).textContent = user.username || '';
+              row.insertCell(1).textContent = user.nickname || '';
+              row.insertCell(2).textContent = user.node_id || '';
+              row.insertCell(3).textContent = user.email || '';
+              row.insertCell(4).textContent = user.telegram_id || '';
+              row.insertCell(5).textContent = user.telegram_first_name || '';
+              row.insertCell(6).textContent = user.telegram_last_name || '';
+              row.insertCell(7).textContent = user.telegram_username || '';
+              row.insertCell(8).textContent = user.mesh_node_id || '';
+              row.insertCell(9).textContent = user.is_active ? 'Да' : 'Нет';
+              row.insertCell(10).textContent = user.role || '';
+
+              // Groups cell
+              const groupsCell = row.insertCell(11);
+              const userGroups = groupsData[index] || [];
+              groupsCell.textContent = userGroups.map(g => g.name).join(', ') || 'None';
+
+              row.insertCell(12).textContent = user.created_at || '';
+
+              const actionCell = row.insertCell(13);
+              const activateBtn = document.createElement('button');
+              activateBtn.textContent = user.is_active ? 'Деактивировать' : 'Активировать';
+              activateBtn.onclick = () => toggleUserActive(user.id, !user.is_active);
+              actionCell.appendChild(activateBtn);
+
+              const editBtn = document.createElement('button');
+              editBtn.textContent = 'Edit';
+              editBtn.onclick = () => showEditModal(user);
+              actionCell.appendChild(editBtn);
+
+              const groupsBtn = document.createElement('button');
+              groupsBtn.textContent = 'Groups';
+              groupsBtn.onclick = () => showGroupsModal(user);
+              actionCell.appendChild(groupsBtn);
+
+              const deleteBtn = document.createElement('button');
+              deleteBtn.textContent = 'Delete';
+              deleteBtn.onclick = () => deleteUser(user.id);
+              actionCell.appendChild(deleteBtn);
+            });
+            document.getElementById('users-table').style.display = 'table';
+          });
+        }
+        document.getElementById('loading').style.display = 'none';
+      })
   function loadUsers() {
     document.getElementById('loading').style.display = 'block';
     document.getElementById('users-table').style.display = 'none';
@@ -277,16 +486,27 @@ document.addEventListener('DOMContentLoaded', function() {
               row.insertCell(1).textContent = user.nickname || '';
               row.insertCell(2).textContent = user.node_id || '';
               row.insertCell(3).textContent = user.email || '';
-              row.insertCell(4).textContent = user.role || '';
+              row.insertCell(4).textContent = user.telegram_id || '';
+              row.insertCell(5).textContent = user.telegram_first_name || '';
+              row.insertCell(6).textContent = user.telegram_last_name || '';
+              row.insertCell(7).textContent = user.telegram_username || '';
+              row.insertCell(8).textContent = user.mesh_node_id || '';
+              row.insertCell(9).textContent = user.is_active ? 'Да' : 'Нет';
+              row.insertCell(10).textContent = user.role || '';
 
               // Groups cell
-              const groupsCell = row.insertCell(5);
+              const groupsCell = row.insertCell(11);
               const userGroups = groupsData[index] || [];
               groupsCell.textContent = userGroups.map(g => g.name).join(', ') || 'None';
 
-              row.insertCell(6).textContent = user.created_at || '';
+              row.insertCell(12).textContent = user.created_at || '';
 
-              const actionCell = row.insertCell(7);
+              const actionCell = row.insertCell(13);
+              const activateBtn = document.createElement('button');
+              activateBtn.textContent = user.is_active ? 'Деактивировать' : 'Активировать';
+              activateBtn.onclick = () => toggleUserActive(user.id, !user.is_active);
+              actionCell.appendChild(activateBtn);
+
               const editBtn = document.createElement('button');
               editBtn.textContent = 'Edit';
               editBtn.onclick = () => showEditModal(user);
@@ -376,6 +596,12 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('editNickname').value = user.nickname || '';
     document.getElementById('editNodeId').value = user.node_id || '';
     document.getElementById('editEmail').value = user.email || '';
+    document.getElementById('editTelegramId').value = user.telegram_id || '';
+    document.getElementById('editTelegramFirstName').value = user.telegram_first_name || '';
+    document.getElementById('editTelegramLastName').value = user.telegram_last_name || '';
+    document.getElementById('editTelegramUsername').value = user.telegram_username || '';
+    document.getElementById('editMeshNodeId').value = user.mesh_node_id || '';
+    document.getElementById('editIsActive').checked = user.is_active || false;
     document.getElementById('editRole').value = user.role || 'user';
     editModal.style.display = 'block';
   }
@@ -461,6 +687,31 @@ document.addEventListener('DOMContentLoaded', function() {
       alert('Error: ' + err.message);
     });
   };
+
+  function toggleUserActive(userId, isActive) {
+    const action = isActive ? 'активировать' : 'деактивировать';
+    if (!confirm(`Вы уверены, что хотите ${action} этого пользователя?`)) return;
+    fetch(`/api/v1/users/${userId}/toggle_active`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_active: isActive ? 1 : 0 })
+    })
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    })
+    .then(result => {
+      if (result.success) {
+        alert(`Пользователь ${action} успешно`);
+        loadUsers();
+      } else {
+        alert(`Не удалось ${action} пользователя`);
+      }
+    })
+    .catch(err => {
+      alert('Error: ' + err.message);
+    });
+  }
 
   function deleteUser(userId) {
     if (!confirm('Вы уверены, что хотите удалить этого пользователя?')) return;

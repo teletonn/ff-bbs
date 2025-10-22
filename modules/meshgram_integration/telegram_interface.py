@@ -8,6 +8,7 @@ from telegram.helpers import escape_markdown
 from telegram.error import BadRequest
 from modules.meshgram_integration.config_manager import ConfigManager
 from modules import log
+from webui.db_handler import get_db_connection
 
 class CommandData(TypedDict):
     description: str
@@ -32,6 +33,7 @@ class TelegramInterface:
             'node': {'description': 'Get information about a specific node', 'handler': self.handle_command},
             'location': {'description': 'Share your location with the Meshtastic network', 'handler': self.handle_command},
             'user': {'description': 'Get information about your Telegram user', 'handler': self.user_command},
+            'reg': {'description': 'Register with your Meshtastic node ID', 'handler': self.handle_command},
         }
         self.is_polling: bool = False
 
@@ -229,6 +231,32 @@ class TelegramInterface:
             return False
 
     def is_user_authorized(self, user_id: int) -> bool:
+        """Check if user is authorized by checking database first, then config as fallback.
+
+        The system now supports dynamic user registration via /reg command.
+        Config-based authorization (telegram_authorized_users) is now optional/fallback.
+        If telegram_authorized_users is empty, system relies on registered users only.
+        """
+        try:
+            # First, try to check database for active users
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT COUNT(*) FROM users WHERE telegram_id = ? AND is_active = 1",
+                (user_id,)
+            )
+            result = cursor.fetchone()
+            conn.close()
+
+            if result and result[0] > 0:
+                # User found in database and is active
+                return True
+
+        except Exception as e:
+            # Database unavailable, log error and fall back to config
+            self.logger.warning(f"Database check failed for user authorization, falling back to config: {e}")
+
+        # Fallback to config-based authorization
         authorized_users = self.config.get_authorized_users()
         return not authorized_users or user_id in authorized_users
 
@@ -276,7 +304,10 @@ class TelegramInterface:
         args = context.args or []
         user_id = update.effective_user.id
 
-        if not self.is_user_authorized(user_id) and command not in ['start', 'help', 'user']:
+        self.logger.info(f"Received command: /{command} with args: {args} from user {user_id}")
+
+        if not self.is_user_authorized(user_id) and command not in ['start', 'help', 'user', 'reg']:
+            self.logger.warning(f"Unauthorized user {user_id} attempted command /{command}")
             await update.message.reply_text(
                 escape_markdown("You are not authorized to use this command.", version=2),
                 parse_mode=ParseMode.MARKDOWN_V2
@@ -288,6 +319,7 @@ class TelegramInterface:
             await self.handle_location_command(update, context)
             return
 
+        self.logger.info(f"Putting command /{command} into message queue")
         await self.message_queue.put({
             'type': 'command',
             'command': command,

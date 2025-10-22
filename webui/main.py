@@ -428,6 +428,72 @@ async def post_register(
     request.session['user_id'] = user_id
     return RedirectResponse(url="/dashboard", status_code=303)
 
+@app.post("/api/v1/users/register", dependencies=[Depends(login_required)])
+async def api_register_user(request: Request, current_user: dict = Depends(get_current_user)):
+    """Manual user registration via API (admin only)."""
+    if current_user['role'] != 'admin':
+        raise HTTPException(403, "Admin role required")
+
+    try:
+        body = await request.json()
+        username = body.get('username')
+        password = body.get('password')
+        nickname = body.get('nickname')
+        node_id = body.get('node_id')
+        email = body.get('email')
+        telegram_id = body.get('telegram_id')
+        telegram_first_name = body.get('telegram_first_name')
+        telegram_last_name = body.get('telegram_last_name')
+        telegram_username = body.get('telegram_username')
+        mesh_node_id = body.get('mesh_node_id')
+        is_active = body.get('is_active', 1)
+        role = body.get('role', 'user')  # Registration always creates users, admin role only via edit
+
+        if not username or not password:
+            raise HTTPException(400, "Username and password are required")
+
+        if len(username) < 3 or len(username) > 20:
+            raise HTTPException(400, "Username must be 3-20 characters")
+        if len(password) < 6:
+            raise HTTPException(400, "Password must be at least 6 characters")
+
+        # Validate node_id format if provided
+        if node_id and not node_id.isdigit():
+            raise HTTPException(400, "Node ID must contain only digits")
+
+        # Validate mesh_node_id format if provided
+        if mesh_node_id and not mesh_node_id.isdigit():
+            raise HTTPException(400, "Mesh Node ID must contain only digits")
+
+        user_id = register_user(username, password, nickname, node_id, email, role)
+        if not user_id:
+            raise HTTPException(400, "Username or node_id already exists")
+
+        # Update additional fields
+        update_data = {}
+        if telegram_id is not None:
+            update_data['telegram_id'] = telegram_id
+        if telegram_first_name is not None:
+            update_data['telegram_first_name'] = telegram_first_name
+        if telegram_last_name is not None:
+            update_data['telegram_last_name'] = telegram_last_name
+        if telegram_username is not None:
+            update_data['telegram_username'] = telegram_username
+        if mesh_node_id is not None:
+            update_data['mesh_node_id'] = mesh_node_id
+        if is_active is not None:
+            update_data['is_active'] = is_active
+
+        if update_data:
+            update_user(user_id, **update_data)
+
+        return {"success": True, "user_id": user_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error registering user: {e}")
+        raise HTTPException(500, "Internal server error")
+
 @app.get("/logout")
 async def logout(request: Request):
     request.session.clear()
@@ -943,7 +1009,12 @@ async def api_delete_trigger(trigger_id: int):
 
 @app.get("/api/v1/users", dependencies=[Depends(login_required)])
 async def api_get_users(current_user: dict = Depends(get_current_user)):
-    return get_users(None)
+    users = get_users(None)
+    # Include all new fields in the response
+    logger.info(f"Retrieved {len(users)} users from database")
+    for user in users[:3]:  # Log first 3 users for debugging
+        logger.info(f"User {user.get('id')}: telegram_id={user.get('telegram_id')}, telegram_username={user.get('telegram_username')}, telegram_first_name={user.get('telegram_first_name')}, telegram_last_name={user.get('telegram_last_name')}, mesh_node_id={user.get('mesh_node_id')}")
+    return users
 
 @app.put("/api/v1/users/{user_id}", dependencies=[Depends(login_required)])
 async def api_update_user(user_id: int, request: Request, current_user: dict = Depends(get_current_user)):
@@ -951,12 +1022,39 @@ async def api_update_user(user_id: int, request: Request, current_user: dict = D
         raise HTTPException(403, "Admin role required")
     try:
         body = await request.json()
+
+        # Validate node_id format if provided
+        if 'node_id' in body and body['node_id'] and not str(body['node_id']).isdigit():
+            raise HTTPException(400, "Node ID must contain only digits")
+
+        # Validate mesh_node_id format if provided
+        if 'mesh_node_id' in body and body['mesh_node_id'] and not str(body['mesh_node_id']).isdigit():
+            raise HTTPException(400, "Mesh Node ID must contain only digits")
+
         updated = update_user(user_id, **body)
         if not updated:
             raise HTTPException(404, "User not found")
         return {"success": True}
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Error updating user: {e}")
+        raise HTTPException(500, "Internal server error")
+
+@app.put("/api/v1/users/{user_id}/toggle_active", dependencies=[Depends(login_required)])
+async def api_toggle_user_active(user_id: int, request: Request, current_user: dict = Depends(get_current_user)):
+    """Toggle user active status."""
+    if current_user['role'] != 'admin':
+        raise HTTPException(403, "Admin role required")
+    try:
+        body = await request.json()
+        is_active = body.get('is_active', 0)
+        updated = update_user(user_id, is_active=is_active)
+        if not updated:
+            raise HTTPException(404, "User not found")
+        return {"success": True}
+    except Exception as e:
+        print(f"Error toggling user active status: {e}")
         raise HTTPException(500, "Internal server error")
 
 @app.delete("/api/v1/users/{user_id}", dependencies=[Depends(login_required)])
