@@ -39,12 +39,23 @@ fi
 
 # Database synchronization
 echo "Synchronizing database..."
-if [ -f "webui/dashboard.db" ]; then
-    echo "Backing up current dashboard.db..."
-    cp webui/dashboard.db webui/dashboard.db.backup
+if [ -f "webui/dashboard_template.db" ]; then
+    if [ -f "webui/dashboard.db" ]; then
+        # Create timestamped backup
+        timestamp=$(date +"%Y%m%d_%H%M%S")
+        echo "Backing up current dashboard.db to dashboard.db.backup_$timestamp..."
+        cp webui/dashboard.db "webui/dashboard.db.backup_$timestamp"
+    fi
+    echo "Copying dashboard template with correct schema..."
+    if cp webui/dashboard_template.db webui/dashboard.db; then
+        echo "Database template successfully applied."
+    else
+        echo "Error: Failed to copy dashboard template."
+        exit 1
+    fi
+else
+    echo "Warning: dashboard_template.db not found. Skipping database synchronization."
 fi
-echo "Copying dashboard template..."
-cp webui/dashboard_template.db webui/dashboard.db
 
 # Install or update dependencies
 echo "Installing or updating dependencies..."
