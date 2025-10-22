@@ -89,7 +89,7 @@ try:
 
     # Create initial admin user if no users exist
     if not get_users(None):
-        admin_id = register_user('admin', 'admin', role='admin')
+        admin_id = register_user('admin', 'admin123', role='admin')
         if admin_id:
             # Ensure admin has node_id
             user = get_user(admin_id)
