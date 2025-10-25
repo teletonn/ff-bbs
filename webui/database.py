@@ -115,6 +115,7 @@ def init_db():
         event_type TEXT NOT NULL CHECK (event_type IN ('enter', 'exit')),
         action_type TEXT NOT NULL,
         action_payload TEXT DEFAULT '{}',
+        active BOOLEAN DEFAULT 1,
         FOREIGN KEY (zone_id) REFERENCES zones (id) ON DELETE CASCADE
     )
     ''')
@@ -263,6 +264,38 @@ def init_db():
     )
     ''')
 
+    # Таблица для отслеживания узлов в зонах (Node Zones)
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS node_zones (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        node_id TEXT NOT NULL,
+        zone_id INTEGER NOT NULL,
+        entered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        is_currently_in BOOLEAN DEFAULT 1,
+        FOREIGN KEY (node_id) REFERENCES nodes (node_id) ON DELETE CASCADE,
+        FOREIGN KEY (zone_id) REFERENCES zones (id) ON DELETE CASCADE,
+        UNIQUE(node_id, zone_id)
+    )
+    ''')
+
+    # Таблица для логов триггеров (Trigger Logs)
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS trigger_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        trigger_id INTEGER NOT NULL,
+        node_id TEXT NOT NULL,
+        event_type TEXT NOT NULL CHECK (event_type IN ('enter', 'exit')),
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        zone_name TEXT,
+        node_name TEXT,
+        action_taken TEXT,
+        action_result TEXT,
+        FOREIGN KEY (trigger_id) REFERENCES triggers (id) ON DELETE CASCADE,
+        FOREIGN KEY (node_id) REFERENCES nodes (node_id) ON DELETE CASCADE
+    )
+    ''')
+
     # Индексы для новых таблиц
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_node_id ON alerts(node_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_alerts_user_id ON alerts(user_id)')
@@ -293,6 +326,18 @@ def init_db():
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_route_traces_dest_node_id ON route_traces(dest_node_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_route_traces_timestamp ON route_traces(timestamp)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_route_traces_status ON route_traces(status)')
+
+    # Индексы для node_zones
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_node_zones_node_id ON node_zones(node_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_node_zones_zone_id ON node_zones(zone_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_node_zones_is_currently_in ON node_zones(is_currently_in)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_node_zones_last_seen ON node_zones(last_seen)')
+
+    # Индексы для trigger_logs
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_trigger_logs_trigger_id ON trigger_logs(trigger_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_trigger_logs_node_id ON trigger_logs(node_id)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_trigger_logs_timestamp ON trigger_logs(timestamp)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_trigger_logs_event_type ON trigger_logs(event_type)')
 
     # Ensure users table has all columns
     cursor.execute("PRAGMA table_info(users)")
@@ -388,6 +433,12 @@ def init_db():
     for col_name, col_type in delivery_columns.items():
         if col_name not in message_columns:
             cursor.execute(f"ALTER TABLE messages ADD COLUMN {col_name} {col_type}")
+
+    # Ensure triggers table has active column
+    cursor.execute("PRAGMA table_info(triggers)")
+    trigger_columns = [col[1] for col in cursor.fetchall()]
+    if 'active' not in trigger_columns:
+        cursor.execute("ALTER TABLE triggers ADD COLUMN active BOOLEAN DEFAULT 1")
 
     # Ensure default settings for messaging
     cursor.execute("SELECT key FROM settings WHERE key = 'messaging.undelivered_timeout_minutes'")

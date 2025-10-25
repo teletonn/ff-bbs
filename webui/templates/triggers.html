@@ -379,8 +379,8 @@ function deleteTrigger(id) {
 function handleActiveToggle(e) {
     const id = e.target.dataset.id;
     const active = e.target.checked ? 1 : 0;
-    fetch(`/api/v1/triggers/${id}`, {
-        method: 'PUT',
+    fetch(`/api/v1/triggers/${id}/toggle_active`, {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ active })
     })

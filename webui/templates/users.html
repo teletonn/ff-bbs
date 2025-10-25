@@ -390,77 +390,17 @@ document.addEventListener('DOMContentLoaded', function() {
         alert('Пользователь добавлен в группу успешно');
         loadUserGroups(userId);
         loadAvailableGroups(userId);
+        loadUsers(); // Refresh the main table to show updated group assignments
       } else {
-        alert('Не удалось добавить пользователя в группу');
+        alert('Не удалось добавить пользователя в группу: ' + (result.message || 'Неизвестная ошибка'));
       }
     })
     .catch(err => {
-      alert('Ошибка: ' + err.message);
+      console.error('Error adding user to group:', err);
+      alert('Ошибка при добавлении пользователя в группу: ' + err.message);
     });
   };
 
-    fetch('/api/v1/users')
-      .then(res => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to fetch users`);
-        return res.json();
-      })
-      .then(data => {
-        console.log('Retrieved users data:', data); // Debug log
-        const tbody = document.getElementById('users-body');
-        tbody.innerHTML = '';
-        if (data.length === 0) {
-          document.getElementById('no-users').style.display = 'block';
-        } else {
-          Promise.all(data.map(user => fetch(`/api/v1/users/${user.id}/groups`).then(res => res.json())))
-          .then(groupsData => {
-            data.forEach((user, index) => {
-              console.log('Processing user:', user); // Debug log for each user
-              const row = tbody.insertRow();
-              row.insertCell(0).textContent = user.username || '';
-              row.insertCell(1).textContent = user.nickname || '';
-              row.insertCell(2).textContent = user.node_id || '';
-              row.insertCell(3).textContent = user.email || '';
-              row.insertCell(4).textContent = user.telegram_id || '';
-              row.insertCell(5).textContent = user.telegram_first_name || '';
-              row.insertCell(6).textContent = user.telegram_last_name || '';
-              row.insertCell(7).textContent = user.telegram_username || '';
-              row.insertCell(8).textContent = user.mesh_node_id || '';
-              row.insertCell(9).textContent = user.is_active ? 'Да' : 'Нет';
-              row.insertCell(10).textContent = user.role || '';
-
-              // Groups cell
-              const groupsCell = row.insertCell(11);
-              const userGroups = groupsData[index] || [];
-              groupsCell.textContent = userGroups.map(g => g.name).join(', ') || 'None';
-
-              row.insertCell(12).textContent = user.created_at || '';
-
-              const actionCell = row.insertCell(13);
-              const activateBtn = document.createElement('button');
-              activateBtn.textContent = user.is_active ? 'Деактивировать' : 'Активировать';
-              activateBtn.onclick = () => toggleUserActive(user.id, !user.is_active);
-              actionCell.appendChild(activateBtn);
-
-              const editBtn = document.createElement('button');
-              editBtn.textContent = 'Edit';
-              editBtn.onclick = () => showEditModal(user);
-              actionCell.appendChild(editBtn);
-
-              const groupsBtn = document.createElement('button');
-              groupsBtn.textContent = 'Groups';
-              groupsBtn.onclick = () => showGroupsModal(user);
-              actionCell.appendChild(groupsBtn);
-
-              const deleteBtn = document.createElement('button');
-              deleteBtn.textContent = 'Delete';
-              deleteBtn.onclick = () => deleteUser(user.id);
-              actionCell.appendChild(deleteBtn);
-            });
-            document.getElementById('users-table').style.display = 'table';
-          });
-        }
-        document.getElementById('loading').style.display = 'none';
-      })
   function loadUsers() {
     document.getElementById('loading').style.display = 'block';
     document.getElementById('users-table').style.display = 'none';
@@ -473,14 +413,19 @@ document.addEventListener('DOMContentLoaded', function() {
         return res.json();
       })
       .then(data => {
+        // Remove duplicate users by ID
+        const uniqueUsers = data.filter((user, index, self) =>
+          index === self.findIndex(u => u.id === user.id)
+        );
+
         const tbody = document.getElementById('users-body');
         tbody.innerHTML = '';
-        if (data.length === 0) {
+        if (uniqueUsers.length === 0) {
           document.getElementById('no-users').style.display = 'block';
         } else {
-          Promise.all(data.map(user => fetch(`/api/v1/users/${user.id}/groups`).then(res => res.json())))
+          Promise.all(uniqueUsers.map(user => fetch(`/api/v1/users/${user.id}/groups`).then(res => res.json())))
           .then(groupsData => {
-            data.forEach((user, index) => {
+            uniqueUsers.forEach((user, index) => {
               const row = tbody.insertRow();
               row.insertCell(0).textContent = user.username || '';
               row.insertCell(1).textContent = user.nickname || '';
@@ -527,12 +472,13 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         document.getElementById('loading').style.display = 'none';
       })
-      .catch(err => {
-        console.error('Ошибка загрузки пользователей:', err);
-        document.getElementById('error').textContent = 'Ошибка загрузки пользователей: ' + err.message;
-        document.getElementById('error').style.display = 'block';
-        document.getElementById('loading').style.display = 'none';
-      });
+    .catch(err => {
+      console.error('Ошибка загрузки пользователей:', err);
+      const errorMsg = err.message || 'Неизвестная ошибка';
+      document.getElementById('error').textContent = 'Ошибка загрузки пользователей: ' + errorMsg;
+      document.getElementById('error').style.display = 'block';
+      document.getElementById('loading').style.display = 'none';
+    });
   }
 
   function loadGroups() {
@@ -584,7 +530,8 @@ document.addEventListener('DOMContentLoaded', function() {
       })
       .catch(err => {
         console.error('Ошибка загрузки групп:', err);
-        document.getElementById('groups-error').textContent = 'Ошибка загрузки групп: ' + err.message;
+        const errorMsg = err.message || 'Неизвестная ошибка';
+        document.getElementById('groups-error').textContent = 'Ошибка загрузки групп: ' + errorMsg;
         document.getElementById('groups-error').style.display = 'block';
         document.getElementById('groups-loading').style.display = 'none';
       });
@@ -678,13 +625,14 @@ document.addEventListener('DOMContentLoaded', function() {
         alert('Пользователь удален из группы успешно');
         loadUserGroups(userId);
         loadAvailableGroups(userId);
-        loadUsers(); // Refresh the main table
+        loadUsers(); // Refresh the main table to show updated group assignments
       } else {
-        alert('Не удалось удалить пользователя из группы');
+        alert('Не удалось удалить пользователя из группы: ' + (result.message || 'Неизвестная ошибка'));
       }
     })
     .catch(err => {
-      alert('Error: ' + err.message);
+      console.error('Error removing user from group:', err);
+      alert('Ошибка при удалении пользователя из группы: ' + err.message);
     });
   };
 

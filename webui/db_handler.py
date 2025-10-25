@@ -440,31 +440,38 @@ def get_trigger(trigger_id):
     finally:
         conn.close()
 
-def create_trigger(zone_id, event_type, action_type, action_payload='{}', name='', description=''):
+def create_trigger(zone_id, event_type, action_type, action_payload='{}', name='', description='', active=1):
     """Create a new trigger."""
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
         cursor.execute(
-            """INSERT INTO triggers (zone_id, event_type, action_type, action_payload, name, description)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (zone_id, event_type, action_type, action_payload, name, description)
+            """INSERT INTO triggers (zone_id, event_type, action_type, action_payload, name, description, active)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (zone_id, event_type, action_type, action_payload, name, description, active)
         )
         conn.commit()
         return cursor.lastrowid
     finally:
         conn.close()
 
-def update_trigger(trigger_id, zone_id, event_type, action_type, action_payload='{}', name='', description=''):
+def update_trigger(trigger_id, zone_id, event_type, action_type, action_payload='{}', name='', description='', active=None):
     """Update an existing trigger."""
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
-        cursor.execute(
-            """UPDATE triggers SET zone_id = ?, event_type = ?, action_type = ?, action_payload = ?, name = ?, description = ?
-               WHERE id = ?""",
-            (zone_id, event_type, action_type, action_payload, name, description, trigger_id)
-        )
+        if active is not None:
+            cursor.execute(
+                """UPDATE triggers SET zone_id = ?, event_type = ?, action_type = ?, action_payload = ?, name = ?, description = ?, active = ?
+                   WHERE id = ?""",
+                (zone_id, event_type, action_type, action_payload, name, description, active, trigger_id)
+            )
+        else:
+            cursor.execute(
+                """UPDATE triggers SET zone_id = ?, event_type = ?, action_type = ?, action_payload = ?, name = ?, description = ?
+                   WHERE id = ?""",
+                (zone_id, event_type, action_type, action_payload, name, description, trigger_id)
+            )
         conn.commit()
         return cursor.rowcount > 0
     finally:
@@ -1408,15 +1415,18 @@ def get_zone(zone_id):
     finally:
         conn.close()
 
-def create_zone(name, latitude, longitude, radius, description=''):
+def create_zone(name, latitude, longitude, radius, description='', active=1):
     """Create a new geo-zone."""
     conn = get_db_connection()
     try:
+        # Convert boolean to integer if necessary
+        if isinstance(active, bool):
+            active = 1 if active else 0
         cursor = conn.cursor()
         cursor.execute(
             """INSERT INTO zones (name, latitude, longitude, radius, description, active)
-               VALUES (?, ?, ?, ?, ?, 1)""",
-            (name, latitude, longitude, radius, description)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (name, latitude, longitude, radius, description, active)
         )
         conn.commit()
         return cursor.lastrowid
@@ -1465,8 +1475,19 @@ def delete_zone(zone_id):
     conn = get_db_connection()
     try:
         cursor = conn.cursor()
+        # First check if zone exists
+        cursor.execute("SELECT id FROM zones WHERE id = ?", (zone_id,))
+        if not cursor.fetchone():
+            return False
+
         cursor.execute("DELETE FROM zones WHERE id = ?", (zone_id,))
         conn.commit()
+
+        # Invalidate zones cache
+        cache = get_cache_manager()
+        cache.delete(cache.get_zones_cache_key())
+        logger.debug(f"Invalidated zones cache after deleting zone {zone_id}")
+
         return cursor.rowcount > 0
     finally:
         conn.close()
@@ -1480,6 +1501,29 @@ def get_active_zones():
         rows = cursor.fetchall()
         columns = [description[0] for description in cursor.description]
         return [dict(zip(columns, row)) for row in rows]
+    finally:
+        conn.close()
+
+def get_active_triggers():
+    """Get all active triggers for bot use."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT t.id, t.name, t.description, t.zone_id, t.event_type, t.action_type, t.action_payload,
+                   z.name as zone_name, z.latitude, z.longitude, z.radius
+            FROM triggers t
+            JOIN zones z ON t.zone_id = z.id
+            WHERE t.active = 1 AND z.active = 1
+            ORDER BY t.id
+        """)
+        rows = cursor.fetchall()
+        columns = [description[0] for description in cursor.description]
+        triggers = [dict(zip(columns, row)) for row in rows]
+        for trigger in triggers:
+            if trigger['action_payload']:
+                trigger['action_payload'] = json.loads(trigger['action_payload'])
+        return triggers
     finally:
         conn.close()
 

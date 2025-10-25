@@ -105,17 +105,19 @@ class MessageProcessor:
 
     async def handle_meshtastic_message(self, packet: Dict[str, Any]) -> None:
         self.logger.debug(f"Received Meshtastic message: {packet=}")
-        
+
         if packet.get('type') == 'ack':
             await self.handle_ack(packet)
         else:
             portnum = packet.get('decoded', {}).get('portnum', '')
             handler = getattr(self, f"handle_{portnum.lower()}", None)
             if handler:
-                self.logger.info(f"Handling Meshtastic message type {portnum=} from {packet.get('fromId')=}")
+                from_id = packet.get('fromId') or 'unknown'
+                self.logger.info(f"Handling Meshtastic message type {portnum=} from {from_id}")
                 await handler(packet)
             else:
-                self.logger.warning(f"Unhandled Meshtastic message type: {portnum=} from: {packet.get('fromId')=}")
+                from_id = packet.get('fromId') or 'unknown'
+                self.logger.warning(f"Unhandled Meshtastic message type: {portnum=} from: {from_id}")
 
     async def handle_ack(self, packet: Dict[str, Any]) -> None:
         from_id = packet.get('fromId')
@@ -134,9 +136,21 @@ class MessageProcessor:
         pending_message = self.pending_acks.pop(message_id, None)
         if pending_message:
             telegram_message_id = pending_message.get('telegram_message_id')
+            chunk_index = pending_message.get('chunk_index', 0)
+            total_chunks = pending_message.get('total_chunks', 1)
+
             if telegram_message_id:
-                await self.telegram.add_reaction(telegram_message_id, '✅')
-                self.logger.info(f"ACK processed for message ID: {message_id}, Telegram message ID: {telegram_message_id}")
+                # For chunked messages, only add reaction when all chunks are acknowledged
+                if total_chunks > 1:
+                    # Check if this is the last chunk or if all chunks are now acknowledged
+                    # For simplicity, we'll add the reaction for each chunk ACK
+                    # In a more sophisticated implementation, we could track chunk completion
+                    await self.telegram.add_reaction(telegram_message_id, '✅')
+                    self.logger.info(f"ACK processed for chunk {chunk_index + 1}/{total_chunks}, message ID: {message_id}, Telegram message ID: {telegram_message_id}")
+                else:
+                    # Single chunk message
+                    await self.telegram.add_reaction(telegram_message_id, '✅')
+                    self.logger.info(f"ACK processed for message ID: {message_id}, Telegram message ID: {telegram_message_id}")
             else:
                 self.logger.warning(f"ACK received for message ID {message_id}, but no Telegram message ID found")
         else:
@@ -144,7 +158,7 @@ class MessageProcessor:
 
     async def handle_text_message_app(self, packet: Dict[str, Any]) -> None:
         text: str = packet['decoded']['payload'].decode('utf-8')
-        sender, recipient = packet.get('fromId', 'unknown'), packet.get('toId', 'unknown')
+        sender, recipient = packet.get('fromId') or 'unknown', packet.get('toId') or 'unknown'
         channel = packet.get('channel', 0)  # Default to channel 0 if not specified
 
         # Get configured default channel for broadcasting to Telegram
@@ -173,31 +187,53 @@ class MessageProcessor:
             # For DM messages, send to "^all"
             recipient = "^all"
         else:
-            # Check if user is authorized to send to default node (which represents channel 0)
-            if default_node_id and self._is_default_node_id(default_node_id) and user_id and not self.telegram.is_user_authorized(user_id):
-                self.logger.warning(f"Unauthorized user {user_id} attempted to send message to default node/channel 0")
-                await self.telegram.send_message("❌ You are not authorized to send messages to the Meshtastic default channel.")
-                return
+            # For unauthorized users in group chats, always send to broadcast (^all)
+            if user_id and not self.telegram.is_user_authorized(user_id):
+                recipient = "^all"
+            else:
+                # Authorized users can use default node ID if available, otherwise send to broadcast
+                recipient = default_node_id if default_node_id else "^all"
 
-            # Use default node ID if available, otherwise send to broadcast
-            recipient = default_node_id if default_node_id else "^all"
+        # Create the base message with sender prefix
+        base_message = f"[TG:{sender}] {text}"
 
-        meshtastic_message = f"[TG:{sender}] {text}"
-        self.logger.info(f"Preparing to send Telegram message to Meshtastic: {meshtastic_message} -> {recipient}")
-        try:
-            meshtastic_message_id = (await self.meshtastic.send_message(meshtastic_message, recipient))['id']
-            self.logger.info(f"Successfully sent message to Meshtastic: {meshtastic_message} -> {recipient}")
+        # Chunk the message if necessary
+        chunks = self.chunk_message(base_message)
 
-            self.pending_acks[meshtastic_message_id] = {
-                'telegram_message_id': telegram_message_id,
-                'timestamp': datetime.now(timezone.utc),
-                'text': meshtastic_message,
-                'recipient': recipient
-            }
+        self.logger.info(f"Message chunked into {len(chunks)} parts: {[chunk[:50] + '...' if len(chunk) > 50 else chunk for chunk in chunks]}")
 
-            asyncio.create_task(self.remove_pending_ack(meshtastic_message_id))
-        except Exception as e:
-            self.logger.error(f"Failed to send message to Meshtastic: {e}", exc_info=True)
+        # Send each chunk separately and track ACKs
+        chunk_message_ids = []
+        for i, chunk in enumerate(chunks):
+            try:
+                meshtastic_packet = await self.meshtastic.send_message(chunk, recipient)
+                meshtastic_message_id = meshtastic_packet.get('id') if isinstance(meshtastic_packet, dict) else meshtastic_packet.id
+                chunk_message_ids.append(meshtastic_message_id)
+                self.logger.info(f"Successfully sent chunk {i+1}/{len(chunks)} to Meshtastic: {chunk[:50]}... -> {recipient}")
+
+                # Track ACK for each chunk
+                self.pending_acks[meshtastic_message_id] = {
+                    'telegram_message_id': telegram_message_id,
+                    'timestamp': datetime.now(timezone.utc),
+                    'text': chunk,
+                    'recipient': recipient,
+                    'chunk_index': i,
+                    'total_chunks': len(chunks)
+                }
+
+                # Schedule ACK timeout removal for each chunk
+                asyncio.create_task(self.remove_pending_ack(meshtastic_message_id))
+
+                # Add 5-second delay between sending chunks
+                await asyncio.sleep(5)
+
+            except Exception as e:
+                self.logger.error(f"Failed to send chunk {i+1}/{len(chunks)} to Meshtastic: {e}", exc_info=True)
+                # Continue with other chunks even if one fails
+                continue
+
+        # If no chunks were sent successfully, notify the user
+        if not chunk_message_ids:
             await self.telegram.send_message("Failed to send message to Meshtastic. Please try again.")
 
     async def remove_pending_ack(self, message_id: str) -> None:
@@ -214,7 +250,8 @@ class MessageProcessor:
                     self.logger.warning(f"ACK timeout for message ID: {message_id}, retrying...")
                     try:
                         # Resend the message
-                        new_message_id = (await self.meshtastic.send_message(data['text'], data['recipient']))['id']
+                        new_packet = await self.meshtastic.send_message(data['text'], data['recipient'])
+                        new_message_id = new_packet.get('id') if isinstance(new_packet, dict) else new_packet.id
                         # Update the pending ACK with new message ID and reset timestamp
                         self.pending_acks[new_message_id] = {
                             'telegram_message_id': data['telegram_message_id'],
@@ -457,16 +494,53 @@ class MessageProcessor:
 
         # If message provided, send it to the node (group message)
         if message_text:
-            try:
-                await self.meshtastic.send_message(f"[TG:{update.effective_user.first_name}] {message_text}", node_id)
+            # Create the base message with sender prefix
+            base_message = f"[TG:{update.effective_user.first_name}] {message_text}"
+
+            # Chunk the message if necessary
+            chunks = self.chunk_message(base_message)
+
+            self.logger.info(f"Message chunked into {len(chunks)} parts: {[chunk[:50] + '...' if len(chunk) > 50 else chunk for chunk in chunks]}")
+
+            # Get the Telegram message ID for ACK tracking
+            telegram_message_id = update.message.message_id
+
+            # Send each chunk separately and track ACKs
+            chunk_message_ids = []
+            for i, chunk in enumerate(chunks):
+                try:
+                    meshtastic_packet = await self.meshtastic.send_message(chunk, node_id)
+                    meshtastic_message_id = meshtastic_packet.get('id') if isinstance(meshtastic_packet, dict) else meshtastic_packet.id
+                    chunk_message_ids.append(meshtastic_message_id)
+                    self.logger.info(f"Successfully sent chunk {i+1}/{len(chunks)} to Meshtastic: {chunk[:50]}... -> {node_id}")
+
+                    # Track ACK for each chunk
+                    self.pending_acks[meshtastic_message_id] = {
+                        'telegram_message_id': telegram_message_id,
+                        'timestamp': datetime.now(timezone.utc),
+                        'text': chunk,
+                        'recipient': node_id,
+                        'chunk_index': i,
+                        'total_chunks': len(chunks)
+                    }
+
+                    # Schedule ACK timeout removal for each chunk
+                    asyncio.create_task(self.remove_pending_ack(meshtastic_message_id))
+
+                    # Add 5-second delay between sending chunks
+                    await asyncio.sleep(5)
+
+                except Exception as e:
+                    self.logger.error(f"Failed to send chunk {i+1}/{len(chunks)} to Meshtastic: {e}", exc_info=True)
+                    # Continue with other chunks even if one fails
+                    continue
+
+            # If no chunks were sent successfully, notify the user
+            if not chunk_message_ids:
+                await update.message.reply_text("Failed to send message to Meshtastic. Please try again.")
+            else:
                 await update.message.reply_text(
                     escape_markdown(f"📡 Message sent to node {node_id}: {message_text}", version=2),
-                    parse_mode=ParseMode.MARKDOWN_V2
-                )
-            except Exception as e:
-                self.logger.error(f"Failed to send message to node {node_id}: {e}", exc_info=True)
-                await update.message.reply_text(
-                    escape_markdown(f"Failed to send message to node {node_id}. Error: {str(e)}", version=2),
                     parse_mode=ParseMode.MARKDOWN_V2
                 )
             return
@@ -650,6 +724,61 @@ class MessageProcessor:
         """Update the rate limit timestamp for a user."""
         self.bell_rate_limit[user_id] = datetime.now(timezone.utc)
 
+    def chunk_message(self, message: str) -> list[str]:
+        """
+        Chunk a message into parts based on requirements:
+        - Messages longer than 110 characters are split into chunks of 110 characters each
+        - Add counters like 1/3, 2/3, etc. at the beginning of each chunk
+        - Total message length should not exceed 1000 characters
+
+        Args:
+            message: The original message text
+
+        Returns:
+            List of chunked message parts
+        """
+        # Truncate message to 1000 characters max
+        if len(message) > 1000:
+            message = message[:1000]
+
+        # If message is 110 characters or less, return as single chunk without counter
+        if len(message) <= 110:
+            return [message]
+
+        # Split into chunks of 110 characters, leaving space for counters
+        chunks = []
+        remaining = message
+        chunk_size = 110
+
+        while remaining:
+            if len(remaining) <= chunk_size:
+                chunks.append(remaining)
+                break
+
+            # Find the last space within the chunk size to avoid breaking words
+            chunk = remaining[:chunk_size]
+            last_space = chunk.rfind(' ')
+
+            if last_space > 0:
+                # Break at the space
+                chunk = remaining[:last_space]
+                remaining = remaining[last_space + 1:]
+            else:
+                # No space found, break at chunk_size
+                chunk = remaining[:chunk_size]
+                remaining = remaining[chunk_size:]
+
+            chunks.append(chunk)
+
+        # Add counters to chunks (only if multiple chunks)
+        if len(chunks) > 1:
+            total_chunks = len(chunks)
+            for i, chunk in enumerate(chunks):
+                counter = f"{i+1}/{total_chunks} "
+                chunks[i] = counter + chunk
+
+        return chunks
+
     async def _update_telemetry_message(self, node_id: str, telemetry_data: dict[str, Any]) -> None:
         self.node_manager.update_node_telemetry(node_id, telemetry_data)
         telemetry_info = self.node_manager.get_node_telemetry(node_id)
@@ -664,7 +793,7 @@ class MessageProcessor:
         return "PWR" if battery_level == 101 else f"{battery_level}%"
 
     async def handle_nodeinfo_app(self, packet: MeshtasticPacket) -> None:
-        node_id: str = packet.get('fromId', 'unknown')
+        node_id: str = packet.get('fromId') or 'unknown'
         node_info: dict[str, Any] = packet['decoded']
         self.node_manager.update_node(node_id, {
             'shortName': node_info.get('user', {}).get('shortName', 'unknown'),
@@ -675,14 +804,14 @@ class MessageProcessor:
 
     async def handle_position_app(self, packet: MeshtasticPacket) -> None:
         position = packet['decoded'].get('position', {})
-        node_id = packet.get('fromId', 'unknown')
+        node_id = packet.get('fromId') or 'unknown'
         self.node_manager.update_node_position(node_id, position)
         position_info = self.node_manager.get_node_position(node_id)
 
         # Removed automatic location sending to Telegram - users must explicitly request via /location command
 
     async def handle_telemetry_app(self, packet: MeshtasticPacket) -> None:
-        node_id = packet.get('fromId', 'unknown')
+        node_id = packet.get('fromId') or 'unknown'
         telemetry = packet.get('decoded', {}).get('telemetry', {})
         device_metrics = telemetry.get('deviceMetrics', {})
         self.node_manager.update_node_telemetry(node_id, device_metrics)
@@ -691,15 +820,18 @@ class MessageProcessor:
     async def handle_admin_app(self, packet: dict[str, Any]) -> None:
         admin_message = packet.get('decoded', {}).get('admin', {})
         if 'getRouteReply' in admin_message:
-            await self._handle_route_reply(admin_message, packet.get('toId', 'unknown'))
+            await self._handle_route_reply(admin_message, packet.get('toId') or 'unknown')
         elif 'deviceMetrics' in admin_message:
-            await self._handle_device_metrics(packet.get('fromId', 'unknown'), admin_message['deviceMetrics'])
+            await self._handle_device_metrics(packet.get('fromId'), admin_message['deviceMetrics'])
         elif 'position' in admin_message:
-            await self._handle_position(packet.get('fromId', 'unknown'), admin_message['position'])
+            await self._handle_position(packet.get('fromId'), admin_message['position'])
         else:
             self.logger.warning(f"Received unexpected admin message: {admin_message}")
 
-    async def _handle_route_reply(self, admin_message: dict[str, Any], dest_id: str) -> None:
+    async def _handle_route_reply(self, admin_message: dict[str, Any], dest_id: str | None) -> None:
+        if dest_id is None:
+            self.logger.warning("Received route reply with None dest_id, skipping")
+            return
         route = admin_message['getRouteReply'].get('route', [])
         if route:
             route_str = " → ".join(f"!{node:08x}" for node in route)
@@ -708,12 +840,18 @@ class MessageProcessor:
             traceroute_result = f"🔍 Traceroute to {dest_id}: No route found"
         await self.telegram.send_message(escape_markdown(traceroute_result, version=2), parse_mode=ParseMode.MARKDOWN_V2)
 
-    async def _handle_device_metrics(self, node_id: str, device_metrics: dict[str, Any]) -> None:
+    async def _handle_device_metrics(self, node_id: str | None, device_metrics: dict[str, Any]) -> None:
+        if node_id is None:
+            self.logger.warning("Received device metrics with None node_id, skipping")
+            return
         self.node_manager.update_node_telemetry(node_id, device_metrics)
         telemetry_info = self.node_manager.get_node_telemetry(node_id)
         await self.telegram.send_or_edit_message('telemetry', node_id, telemetry_info)
 
-    async def _handle_position(self, node_id: str, position: dict[str, Any]) -> None:
+    async def _handle_position(self, node_id: str | None, position: dict[str, Any]) -> None:
+        if node_id is None:
+            self.logger.warning("Received position data with None node_id, skipping")
+            return
         self.node_manager.update_node_position(node_id, position)
         position_info = self.node_manager.get_node_position(node_id)
         await self.telegram.send_or_edit_message('location', node_id, position_info)

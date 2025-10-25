@@ -57,45 +57,82 @@ POLL_INTERVAL = 2.0  # seconds between polls
 OUTBOUND_MIN_DELAY = 0.25  # seconds; gentle throttle to avoid 429
 
 
+def telegram_message_chunker(message: str) -> List[str]:
+    """Chunk a message into parts of max 230 chars, adding counters for multi-part messages."""
+    if len(message) > 1000:
+        # Truncate to 1000 chars as per requirements
+        message = message[:1000]
+    if len(message) <= 230:
+        return [message]
+    # Split into chunks of ~220 chars to leave space for counters
+    chunks = []
+    msg = message
+    while msg:
+        if len(msg) <= 220:
+            chunks.append(msg)
+            break
+        # Find last space within 220 chars
+        chunk = msg[:220]
+        last_space = chunk.rfind(' ')
+        if last_space > 0:
+            chunk = msg[:last_space]
+            msg = msg[last_space + 1:]
+        else:
+            # No space, cut at 220
+            chunk = msg[:220]
+            msg = msg[220:]
+        chunks.append(chunk)
+    if len(chunks) == 1:
+        return chunks
+    # Add counters
+    total = len(chunks)
+    for i in range(len(chunks)):
+        counter = f"({i+1}/{total}) "
+        chunks[i] = counter + chunks[i]
+    return chunks
+
+
 def tg_send(text: str) -> None:
-    """Send a message to Telegram chat; basic 429 backoff."""
+    """Send a message to Telegram chat; chunks long messages and handles basic 429 backoff."""
     if not text:
         _log("[tg_send] skipped: empty text")
         return
-    _log(f"[tg_send] → sending: {text!r}")
-    time.sleep(OUTBOUND_MIN_DELAY)
-    attempt = 1
-    while True:
-        try:
-            r = requests.post(
-                SEND_URL,
-                data={
-                    "chat_id": CHAT_ID,
-                    "text": text,
-                    "disable_web_page_preview": True,
-                },
-                timeout=30,
-            )
-            if r.status_code == 200:
-                _log("[tg_send] ✓ delivered")
-                return
-            if r.status_code == 429:
-                # crude retry-after
-                try:
-                    retry_after = r.json().get("parameters", {}).get("retry_after", 1)
-                except Exception:
-                    retry_after = 1
-                _log(f"[tg_send] 429 rate-limited, retry_after={retry_after}s")
-                time.sleep(max(1, int(retry_after)))
+    chunks = telegram_message_chunker(text)
+    for chunk in chunks:
+        _log(f"[tg_send] → sending chunk: {chunk!r}")
+        time.sleep(OUTBOUND_MIN_DELAY)
+        attempt = 1
+        while True:
+            try:
+                r = requests.post(
+                    SEND_URL,
+                    data={
+                        "chat_id": CHAT_ID,
+                        "text": chunk,
+                        "disable_web_page_preview": True,
+                    },
+                    timeout=30,
+                )
+                if r.status_code == 200:
+                    _log("[tg_send] ✓ chunk delivered")
+                    break  # Proceed to next chunk
+                if r.status_code == 429:
+                    # crude retry-after
+                    try:
+                        retry_after = r.json().get("parameters", {}).get("retry_after", 1)
+                    except Exception:
+                        retry_after = 1
+                    _log(f"[tg_send] 429 rate-limited, retry_after={retry_after}s")
+                    time.sleep(max(1, int(retry_after)))
+                    attempt += 1
+                    continue
+                # non-retriable; log & drop this chunk
+                _log(f"[tg_send] ✗ HTTP {r.status_code}: {r.text}")
+                break  # Proceed to next chunk
+            except requests.RequestException as e:
+                _log(f"[tg_send] RequestException: {e!r} (attempt {attempt})")
+                time.sleep(1)
                 attempt += 1
-                continue
-            # non-retriable; log & drop
-            _log(f"[tg_send] ✗ HTTP {r.status_code}: {r.text}")
-            return
-        except requests.RequestException as e:
-            _log(f"[tg_send] RequestException: {e!r} (attempt {attempt})")
-            time.sleep(1)
-            attempt += 1
 
 
 def tg_poll_loop(handler):

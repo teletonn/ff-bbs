@@ -160,7 +160,7 @@ def _(key, **kwargs):
     message = translations.get(key, key) # Fallback to key if not found
     # Change network name for Russian localization
     if language == 'ru':
-        message = message.replace("MeshBot", "Светлячок")
+        message = message.replace("Firefly", "Светлячок")
     return message.format(**kwargs)
 
 # list of commands to remove from the default list for DM only
@@ -2173,8 +2173,20 @@ async def main():
     nodeStatusTask = asyncio.create_task(node_status_check_task())
     messageResendTask = asyncio.create_task(message_resend_task())
 
+    # Add trigger maintenance task if trigger system is enabled
+    triggerTask = None
+    if 'trigger_maintenance_loop' in globals():
+        try:
+            triggerTask = asyncio.create_task(trigger_maintenance_loop())
+            logger.info("System: Trigger maintenance loop started")
+        except Exception as e:
+            logger.error(f"System: Failed to start trigger maintenance loop: {e}")
+
     # Gather all tasks
     tasks = [meshRxTask, watchdogTask, commandPollerTask, cleanupTask, reloadTask, nodeStatusTask, messageResendTask]
+
+    if triggerTask is not None:
+        tasks.append(triggerTask)
 
     if telegram_task is not None:
         tasks.append(telegram_task)

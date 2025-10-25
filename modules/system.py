@@ -17,6 +17,16 @@ import sys
 import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from webui.db_handler import save_message, update_message_delivery_status, get_undelivered_messages, get_queued_messages, update_node_telemetry, get_node_by_id, mark_messages_delivered_to_node, insert_telemetry, delete_message, get_db_connection, get_message_by_id, update_message_status, retry_message, delete_message_by_user, update_node_on_packet
+
+# Import trigger system modules
+try:
+    from modules.trigger_engine import TriggerEngine, Position
+    from modules.trigger_actions import action_executor
+    trigger_system_enabled = True
+    logging.info("System: Trigger system modules imported successfully")
+except ImportError as e:
+    trigger_system_enabled = False
+    logging.warning(f"System: Trigger system modules not available: {e}")
 from modules.log import *
 
 # Import broadcast_map_update for real-time updates
@@ -33,6 +43,9 @@ asyncLoop = asyncio.new_event_loop()
 games_enabled = False
 multiPingList = [{'message_from_id': 0, 'count': 0, 'type': '', 'deviceID': 0, 'channel_number': 0, 'startCount': 0}]
 interface_retry_count = 3
+
+# Trigger system global variables
+trigger_engine = None
 
 # Ping Configuration
 if ping_enabled:
@@ -277,6 +290,15 @@ if len(help_message) > 20:
     # split in half for formatting
     help_message = help_message[:len(help_message)//2] + ["\nCMD?"] + help_message[len(help_message)//2:]
 help_message = ", ".join(help_message)
+
+# Initialize trigger system if enabled
+if trigger_system_enabled:
+    try:
+        trigger_engine = TriggerEngine()
+        logger.info("System: Trigger engine initialized successfully")
+    except Exception as e:
+        logger.error(f"System: Failed to initialize trigger engine: {e}")
+        trigger_engine = None
 
 # BLE dual interface prevention
 ble_count = sum(1 for i in range(1, 10) if globals().get(f'interface{i}_type') == 'ble')
@@ -1213,6 +1235,26 @@ def consumeMetadata(packet, rxNode=0):
                 except Exception as e:
                     logger.error(f"System: Failed to insert telemetry data for node {nodeID}: {e}")
 
+                # Process position update for trigger system
+                if trigger_engine and lat is not None and lng is not None:
+                    try:
+                        position = Position(
+                            latitude=lat,
+                            longitude=lng,
+                            altitude=alt,
+                            timestamp=time.time()
+                        )
+                        events = trigger_engine.process_position_update(str(nodeID), position)
+
+                        # Execute trigger actions asynchronously
+                        if events:
+                            loop = asyncio.get_running_loop()
+                            for event in events:
+                                loop.create_task(execute_trigger_action(event))
+
+                    except Exception as e:
+                        logger.error(f"System: Failed to process position update for triggers: {e}")
+
                 # if altitude is over highfly_altitude send a log and message for high-flying nodes and not in highfly_ignoreList
                 if position_data.get('altitude', 0) > highfly_altitude and highfly_enabled and str(nodeID) not in highfly_ignoreList:
                     logger.info(f"System: High Altitude {position_data['altitude']}m on Device: {rxNode} NodeID: {nodeID}")
@@ -1392,7 +1434,7 @@ async def handleFileWatcher():
         msg =  await watch_file()
         if msg != ERROR_FETCHING_DATA and msg is not None:
             logger.debug(f"System: Detected Alert from FileWatcher on file {file_monitor_file_path}")
-            
+
             # check we are not spammig the channel limit messages to once per minute
             if time.time() - lastFileAlert > 60:
                 lastFileAlert = time.time()
@@ -1423,6 +1465,42 @@ async def handleFileWatcher():
 
         await asyncio.sleep(1)
         pass
+
+async def execute_trigger_action(event_data: dict):
+    """Execute a trigger action asynchronously."""
+    try:
+        action_type = event_data.get('trigger', {}).get('action_type', '')
+        action_payload = event_data.get('trigger', {}).get('action_payload', '')
+
+        if action_type and action_payload:
+            success = await action_executor.execute_action(action_type, action_payload, event_data)
+            if success:
+                logger.info(f"System: Trigger action executed successfully: {action_type}")
+            else:
+                logger.warning(f"System: Trigger action failed: {action_type}")
+        else:
+            logger.error("System: Invalid trigger action configuration")
+
+    except Exception as e:
+        logger.error(f"System: Failed to execute trigger action: {e}")
+
+async def trigger_maintenance_loop():
+    """Background loop for trigger system maintenance."""
+    while True:
+        try:
+            if trigger_engine:
+                # Clean up old position data
+                trigger_engine.cleanup_old_states()
+
+                # Reload configuration periodically (every 5 minutes)
+                if int(time.time()) % 300 == 0:
+                    trigger_engine.reload_configuration()
+                    logger.debug("System: Trigger configuration reloaded")
+
+        except Exception as e:
+            logger.error(f"System: Error in trigger maintenance loop: {e}")
+
+        await asyncio.sleep(60)  # Run every minute
 
 async def retry_interface(nodeID):
     global retry_int1, retry_int2, retry_int3, retry_int4, retry_int5, retry_int6, retry_int7, retry_int8, retry_int9

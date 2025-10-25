@@ -28,7 +28,7 @@ from .db_handler import (
     get_alerts, get_alert, create_alert, update_alert_status, delete_alert,
     get_alert_configs, get_alert_config, create_alert_config, update_alert_config, delete_alert_config,
     get_processes, get_process, create_process, update_process, delete_process, update_process_run_count,
-    get_zones, get_zone, create_zone, update_zone, delete_zone, get_active_zones,
+    get_zones, get_zone, create_zone, update_zone, delete_zone, get_active_zones, get_active_triggers,
     update_message_status, retry_message, delete_message_by_user, update_node_on_packet,
     update_old_sent_messages_to_delivered, mark_sent_messages_as_undelivered
 )
@@ -40,6 +40,7 @@ import os
 import asyncio
 from typing import List
 import json
+import re
 from modules.log import logger
 
 # WebSocket connection manager
@@ -462,8 +463,8 @@ async def api_register_user(request: Request, current_user: dict = Depends(get_c
             raise HTTPException(400, "Node ID must contain only digits")
 
         # Validate mesh_node_id format if provided
-        if mesh_node_id and not mesh_node_id.isdigit():
-            raise HTTPException(400, "Mesh Node ID must contain only digits")
+        if mesh_node_id and not re.match(r'^![0-9a-fA-F]{8}$', mesh_node_id):
+            raise HTTPException(400, "Mesh Node ID must be in format !12345678 (exclamation mark followed by 8 hexadecimal digits)")
 
         user_id = register_user(username, password, nickname, node_id, email, role)
         if not user_id:
@@ -920,6 +921,7 @@ async def api_create_trigger(request: Request):
         action_payload = json.dumps(body.get('action_payload', {}))
         name = body.get('name', '')
         description = body.get('description', '')
+        active = body.get('active', 1)
 
         logging.info(f"Extracted zone_id: {zone_id} (type: {type(zone_id)})")
         logging.info(f"event_type: {event_type}, action_type: {action_type}")
@@ -943,7 +945,7 @@ async def api_create_trigger(request: Request):
             raise HTTPException(status_code=400, detail="action_payload must be valid JSON")
 
         logging.info(f"About to create trigger with zone_id={zone_id}, event_type={event_type}, action_type={action_type}")
-        trigger_id = create_trigger(zone_id, event_type, action_type, action_payload, name, description)
+        trigger_id = create_trigger(zone_id, event_type, action_type, action_payload, name, description, active)
         logging.info(f"create_trigger returned: {trigger_id}")
         if trigger_id:
             return {"id": trigger_id}
@@ -974,6 +976,7 @@ async def api_update_trigger(trigger_id: int, request: Request):
         action_payload = json.dumps(body.get('action_payload', {}))
         name = body.get('name', '')
         description = body.get('description', '')
+        active = body.get('active', 1)
 
         if zone_id is None or event_type is None or action_type is None:
             raise HTTPException(status_code=400, detail="Required: zone_id, event_type, action_type")
@@ -989,7 +992,7 @@ async def api_update_trigger(trigger_id: int, request: Request):
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="action_payload must be valid JSON")
 
-        updated = update_trigger(trigger_id, zone_id, event_type, action_type, action_payload, name, description)
+        updated = update_trigger(trigger_id, zone_id, event_type, action_type, action_payload, name, description, active)
         if not updated:
             raise HTTPException(status_code=404, detail="Trigger not found")
         return {"success": True}
@@ -997,6 +1000,32 @@ async def api_update_trigger(trigger_id: int, request: Request):
         raise HTTPException(status_code=400, detail="Invalid JSON")
     except Exception as e:
         print(f"Error updating trigger: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.patch("/api/v1/triggers/{trigger_id}/toggle_active", dependencies=[Depends(login_required)])
+async def api_toggle_trigger_active(trigger_id: int, request: Request):
+    """PATCH: Toggle active status of a trigger."""
+    try:
+        body = await request.json()
+        active = body.get('active')
+        if active is None:
+            raise HTTPException(status_code=400, detail="active field is required")
+
+        # Get current trigger to update only active field
+        trigger = get_trigger(trigger_id)
+        if not trigger:
+            raise HTTPException(status_code=404, detail="Trigger not found")
+
+        updated = update_trigger(trigger_id, trigger['zone_id'], trigger['event_type'],
+                                trigger['action_type'], json.dumps(trigger['action_payload']),
+                                trigger.get('name', ''), trigger.get('description', ''), active)
+        if not updated:
+            raise HTTPException(status_code=404, detail="Trigger not found")
+        return {"success": True}
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    except Exception as e:
+        print(f"Error toggling trigger active status: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.delete("/api/v1/triggers/{trigger_id}", dependencies=[Depends(login_required)])
@@ -1510,6 +1539,7 @@ async def api_create_zone(request: Request, current_user: dict = Depends(get_cur
         longitude = body.get('longitude')
         radius = body.get('radius', 100)
         description = body.get('description', '')
+        active = body.get('active', 1)
 
         if not name or latitude is None or longitude is None:
             raise HTTPException(status_code=400, detail="name, latitude, and longitude are required")
@@ -1517,7 +1547,7 @@ async def api_create_zone(request: Request, current_user: dict = Depends(get_cur
         if not (-90 <= latitude <= 90) or not (-180 <= longitude <= 180):
             raise HTTPException(status_code=400, detail="Invalid coordinates")
 
-        zone_id = create_zone(name, latitude, longitude, radius, description)
+        zone_id = create_zone(name, latitude, longitude, radius, description, active)
         if zone_id:
             return {"id": zone_id}
         else:
