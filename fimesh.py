@@ -29,7 +29,12 @@ class UploadState:
         self.window_size = 2
         self.next_chunk_to_send = 0
         self.last_ack_time = time.time()
-        self.timeout = 60  # seconds, increased for ACK processing
+        self.start_time = time.time()  # Track total transfer time
+        self.base_timeout = 180  # 3 minutes initial timeout for mesh networks
+        self.current_timeout = 180
+        self.backoff_factor = 2  # Exponential backoff multiplier
+        self.max_retries = 5  # Reduced retries with longer intervals
+        self.total_timeout = 1800  # 30 minutes total transfer timeout
         self.max_window_size = 10  # from config
         self.manifests = []  # For large files, chain of manifests
         self.retry_count = 0
@@ -48,7 +53,9 @@ class DownloadState:
         self.window_size = 2
         self.next_expected_chunk = 0
         self.last_packet_time = time.time()
-        self.timeout = 60  # seconds, increased for ACK processing
+        self.start_time = time.time()  # Track total transfer time
+        self.timeout = 300  # 5 minutes timeout for downloads in mesh networks
+        self.total_timeout = 1800  # 30 minutes total transfer timeout
         self.max_window_size = 10  # from config
         self.manifests = []  # Received manifests
 
@@ -282,7 +289,7 @@ def periodic_fimesh_task():
         # Check if pong received for node discovery
         if not upload.pong_received:
             # Wait for pong before starting transfer
-            if current_time - upload.last_ack_time > 10:  # 10 second timeout for pong
+            if current_time - upload.last_ack_time > 60:  # 1 minute timeout for pong in mesh networks
                 print(f"Node {upload.device_id} did not respond to ping, aborting transfer")
                 fail_upload(upload)
                 del active_uploads[session_id]
@@ -296,26 +303,25 @@ def periodic_fimesh_task():
             upload.manifests_sent = True
             continue
 
-        if current_time - upload.last_ack_time > upload.timeout:
+        # Check total transfer timeout
+        if current_time - upload.start_time > upload.total_timeout:
+            print(f"Upload {session_id} timed out after {upload.total_timeout} seconds")
+            fail_upload(upload)
+            del active_uploads[session_id]
+            continue
+
+        if current_time - upload.last_ack_time > upload.current_timeout:
             upload.retry_count += 1
-            if upload.retry_count <= 10:
+            if upload.retry_count <= upload.max_retries:
+                # Exponential backoff: increase timeout
+                upload.current_timeout = min(upload.current_timeout * upload.backoff_factor, 600)  # Max 10 minutes
+                print(f"Retry {upload.retry_count} for upload {session_id}, new timeout: {upload.current_timeout}s")
                 # Retransmit
                 retransmit_chunks(upload)
                 upload.window_size = max(1, upload.window_size // 2)  # AIMD: Multiplicative decrease
-            elif upload.retry_count <= 13:  # 10 + 3
-                # Pause for 2 minutes after 10 attempts
-                if upload.retry_count == 11:
-                    upload.pause_until = current_time + 120  # 2 minutes
-                # After 3 attempts with 10-min pauses, fail
-                elif upload.retry_count > 13:
-                    fail_upload(upload)
-                    del active_uploads[session_id]
-                    continue
-                else:
-                    # Retransmit after pause
-                    retransmit_chunks(upload)
-                    upload.window_size = max(1, upload.window_size // 2)
+                upload.last_ack_time = current_time  # Reset timer for new timeout
             else:
+                print(f"Upload {session_id} failed after {upload.max_retries} retries")
                 fail_upload(upload)
                 del active_uploads[session_id]
                 continue
@@ -325,8 +331,15 @@ def periodic_fimesh_task():
 
     # Handle downloads: check for completion, timeouts
     for session_id, download in list(active_downloads.items()):
+        # Check total transfer timeout
+        if current_time - download.start_time > download.total_timeout:
+            print(f"Download {session_id} timed out after {download.total_timeout} seconds")
+            del active_downloads[session_id]
+            continue
+
         if current_time - download.last_packet_time > download.timeout:
             # Timeout, abort download
+            print(f"Download {session_id} timed out waiting for packets")
             del active_downloads[session_id]
         elif len(download.received_chunks) == len(download.expected_chunks):
             # All chunks received, assemble file
