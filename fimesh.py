@@ -205,6 +205,9 @@ def check_for_outgoing_files():
                 if len(parts) == 2:
                     base_name = parts[0]
                     node_id = parts[1].split('.')[0]  # Remove extension if present
+                    # Skip files marked as failed
+                    if node_id == 'failed':
+                        continue
                     session_id = generate_session_id()
                     start_upload(file_path, session_id, node_id)
             # If no node specified, skip
