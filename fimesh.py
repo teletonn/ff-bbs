@@ -29,12 +29,13 @@ class UploadState:
         self.window_size = 2
         self.next_chunk_to_send = 0
         self.last_ack_time = time.time()
-        self.timeout = 30  # seconds
+        self.timeout = 60  # seconds, increased for ACK processing
         self.max_window_size = 10  # from config
         self.manifests = []  # For large files, chain of manifests
         self.retry_count = 0
         self.pause_until = 0
         self.failed = False
+        self.pong_received = False
 
 class DownloadState:
     def __init__(self, session_id, file_name, file_size, device_id):
@@ -47,7 +48,7 @@ class DownloadState:
         self.window_size = 2
         self.next_expected_chunk = 0
         self.last_packet_time = time.time()
-        self.timeout = 30  # seconds
+        self.timeout = 60  # seconds, increased for ACK processing
         self.max_window_size = 10  # from config
         self.manifests = []  # Received manifests
 
@@ -130,16 +131,16 @@ def handle_manifest_packet(session_id, man_num_hex, is_last_flag, payload, from_
 def handle_data_packet(session_id, packet_type, chunk_num_hex, payload, from_node_id, deviceID):
     try:
         chunk_num = int(chunk_num_hex, 16)
-        decoded_payload = base64.b64decode(payload)
-        decompressed = zlib.decompress(decoded_payload)
 
         if packet_type == 'DAT':
             # Data chunk
             if session_id in active_downloads:
                 download = active_downloads[session_id]
+                decoded_payload = base64.b64decode(payload)
+                decompressed = zlib.decompress(decoded_payload)
                 download.received_chunks[chunk_num] = decompressed
                 download.last_packet_time = time.time()
-                # Send ACK
+                # Send ACK immediately when MAN packet is received
                 send_ack_packet(session_id, chunk_num, deviceID, from_node_id)
         elif packet_type == 'ACK':
             # Acknowledgement
@@ -156,6 +157,15 @@ def handle_data_packet(session_id, packet_type, chunk_num_hex, payload, from_nod
                     update_fimesh_transfer_status(session_id, progress=int(progress))
                 except Exception as e:
                     print(f"Error updating transfer progress: {e}")
+        elif packet_type == 'PING':
+            # Node discovery request - respond with pong
+            send_pong_packet(session_id, from_node_id)
+        elif packet_type == 'PONG':
+            # Node discovery response
+            if session_id in active_uploads:
+                upload = active_uploads[session_id]
+                upload.pong_received = True
+                print(f"Node {upload.device_id} is online, starting file transfer")
     except Exception as e:
         print(f"Error handling data packet: {e}")
 
@@ -181,7 +191,7 @@ def process_manifests(download):
 
 def send_ack_packet(session_id, chunk_num, deviceID, target_node_id):
     # Send ACK packet as plain text message through normal message system
-    packet = f"fmsh:{session_id}:ACK:{chunk_num:04x}:"
+    packet = f"fmsh:{session_id}:ACK:{chunk_num:04x}:ACK"
     from mesh_bot import send_message
     send_message(packet, 0, target_node_id, deviceID)  # Send to specific target node
 
@@ -222,8 +232,20 @@ def start_upload(file_path, session_id, device_id):
     except Exception as e:
         print(f"Error creating transfer record: {e}")
 
-    # Send manifests first
-    send_manifests(upload)
+    # Node discovery: Send ping before starting transfer
+    send_ping_packet(session_id, device_id)
+
+def send_ping_packet(session_id, target_node_id):
+    # Send ping packet to check if node is online
+    packet = f"fmsh:{session_id}:PING::PING"
+    from mesh_bot import send_message
+    send_message(packet, 0, target_node_id, 1)  # Send to target node on device 1
+
+def send_pong_packet(session_id, target_node_id):
+    # Send pong response
+    packet = f"fmsh:{session_id}:PONG::PONG"
+    from mesh_bot import send_message
+    send_message(packet, 0, target_node_id, 1)  # Send to target node on device 1
 
 def send_manifests(upload):
     from mesh_bot import send_message
@@ -253,6 +275,24 @@ def periodic_fimesh_task():
             continue  # Skip failed uploads
         if current_time < upload.pause_until:
             continue  # Paused
+
+        # Check if pong received for node discovery
+        if not upload.pong_received:
+            # Wait for pong before starting transfer
+            if current_time - upload.last_ack_time > 10:  # 10 second timeout for pong
+                print(f"Node {upload.device_id} did not respond to ping, aborting transfer")
+                fail_upload(upload)
+                del active_uploads[session_id]
+                continue
+            else:
+                continue  # Wait for pong
+
+        # Start sending manifests after pong received
+        if not hasattr(upload, 'manifests_sent'):
+            send_manifests(upload)
+            upload.manifests_sent = True
+            continue
+
         if current_time - upload.last_ack_time > upload.timeout:
             upload.retry_count += 1
             if upload.retry_count <= 10:
