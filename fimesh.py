@@ -187,7 +187,7 @@ def handle_data_packet(session_id, packet_type, chunk_num_hex, payload, from_nod
                 from webui.db_handler import update_fimesh_transfer_status
                 try:
                     progress = len(upload.acked_chunks) / len(upload.chunks) * 100 if upload.chunks else 0
-                    update_fimesh_transfer_status(session_id, progress=int(progress))
+                    update_fimesh_transfer_status(session_id, 'transferring', progress=int(progress))
                 except Exception as e:
                     print(f"Error updating transfer progress: {e}")
         elif packet_type == 'PING':
