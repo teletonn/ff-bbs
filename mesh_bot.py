@@ -1534,8 +1534,9 @@ def onReceive(packet, interface):
 
             # Intercept FiMesh packets early to prevent database logging and regular message processing
             if message_string.startswith('fmsh:'):
+                logger.info(f"System: Intercepted FiMesh packet: {message_string[:50]}...")
                 fimesh.handle_fimesh_packet(message_string, message_from_id, rxNode)
-                logger.debug(f"System: FiMesh packet intercepted and handled, skipping regular message processing: {message_string[:50]}...")
+                logger.debug(f"System: FiMesh packet handled, skipping regular message processing")
                 return
 
             # Save incoming text message to database
@@ -1797,8 +1798,9 @@ def onReceive(packet, interface):
                 try:
                     payload_str = payload_bytes.decode('utf-8')
                     if payload_str.startswith('fmsh:'):
+                        logger.info(f"System: Intercepted FiMesh packet from UNKNOWN_APP: {payload_str[:50]}...")
                         fimesh.handle_fimesh_packet(payload_str, message_from_id, rxNode)
-                        logger.debug(f"System: Handled FiMesh packet from UNKNOWN_APP: {payload_str[:50]}...")
+                        logger.debug(f"System: FiMesh packet from UNKNOWN_APP handled")
                 except UnicodeDecodeError:
                     pass  # Not a text packet
         else:

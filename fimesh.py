@@ -105,6 +105,16 @@ def handle_fimesh_packet(packet_str, from_node_id, deviceID):
 
 def handle_manifest_packet(session_id, man_num_hex, is_last_flag, payload, from_node_id, deviceID):
     try:
+        # Validate man_num_hex
+        if not man_num_hex or not man_num_hex.strip():
+            print(f"Error: invalid man_num_hex '{man_num_hex}' in manifest packet")
+            return
+
+        # Validate payload
+        if not payload or not payload.strip():
+            print(f"Error: empty payload in MAN packet")
+            return
+
         man_num = int(man_num_hex, 16)
         decoded_payload = base64.b64decode(payload)
         decompressed = zlib.decompress(decoded_payload)
@@ -137,9 +147,19 @@ def handle_manifest_packet(session_id, man_num_hex, is_last_flag, payload, from_
 
 def handle_data_packet(session_id, packet_type, chunk_num_hex, payload, from_node_id, deviceID):
     try:
+        # Validate chunk_num_hex
+        if not chunk_num_hex or not chunk_num_hex.strip():
+            print(f"Error: invalid chunk_num_hex '{chunk_num_hex}' in data packet")
+            return
+
         chunk_num = int(chunk_num_hex, 16)
 
         if packet_type == 'DAT':
+            # Validate payload
+            if not payload or not payload.strip():
+                print(f"Error: empty payload in DAT packet")
+                return
+
             # Data chunk
             if session_id in active_downloads:
                 download = active_downloads[session_id]
