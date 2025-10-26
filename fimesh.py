@@ -166,7 +166,8 @@ def handle_data_packet(session_id, packet_type, chunk_num_hex, payload, from_nod
                 decompressed = zlib.decompress(decoded_payload)
                 download.received_chunks[chunk_num] = decompressed
                 download.last_packet_time = time.time()
-                # Send ACK immediately when MAN packet is received
+                # Send ACK after a short delay to avoid collision
+                time.sleep(0.1)
                 send_ack_packet(session_id, chunk_num, deviceID, from_node_id)
         elif packet_type == 'ACK':
             # Validate chunk_num_hex for ACK packets
@@ -272,13 +273,13 @@ def start_upload(file_path, session_id, device_id):
 
 def send_ping_packet(session_id, target_node_id):
     # Send ping packet to check if node is online
-    packet = f"fmsh:{session_id}:PING::PING"
+    packet = f"fmsh:{session_id}:PING:0000:PING"
     from mesh_bot import send_message
     send_message(packet, 0, target_node_id, 1)  # Send to target node on device 1
 
 def send_pong_packet(session_id, target_node_id):
     # Send pong response
-    packet = f"fmsh:{session_id}:PONG::PONG"
+    packet = f"fmsh:{session_id}:PONG:0000:PONG"
     from mesh_bot import send_message
     send_message(packet, 0, target_node_id, 1)  # Send to target node on device 1
 
@@ -380,9 +381,10 @@ def retransmit_chunks(upload):
             send_chunk(upload, chunk_num)
 
 def send_next_chunks(upload):
-    while upload.next_chunk_to_send < len(upload.chunks) and (upload.next_chunk_to_send - len(upload.acked_chunks)) < upload.window_size:
+    if upload.next_chunk_to_send < len(upload.chunks) and (upload.next_chunk_to_send - len(upload.acked_chunks)) < upload.window_size:
         send_chunk(upload, upload.next_chunk_to_send)
         upload.next_chunk_to_send += 1
+        time.sleep(0.1)  # Add delay between chunks to allow ACK processing
 
 def send_chunk(upload, chunk_num):
     from mesh_bot import send_message
