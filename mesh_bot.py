@@ -176,7 +176,8 @@ def auto_response(message, snr, rssi, hop, pkiStatus, message_from_id, channel_n
     # Intercept FiMesh packets
     if message.startswith('fmsh:'):
         fimesh.handle_fimesh_packet(message, message_from_id, deviceID)
-        return  # Do not respond to FiMesh packets
+        # Do not respond to FiMesh packets, but continue processing for logging
+        return
 
     message_lower = message.lower()
     bot_response = _("cant_do_that")
@@ -1776,6 +1777,17 @@ def onReceive(packet, interface):
                             logger.info(f"System: Message {request_id} delivery confirmed via ACK")
                     except Exception as e:
                         logger.error(f"System: Failed to update message delivery status for ACK {request_id}: {e}")
+        elif 'decoded' in packet and packet['decoded']['portnum'] == 'UNKNOWN_APP':
+            # Handle FiMesh packets that come through as UNKNOWN_APP
+            if 'payload' in packet['decoded']:
+                payload_bytes = packet['decoded']['payload']
+                try:
+                    payload_str = payload_bytes.decode('utf-8')
+                    if payload_str.startswith('fmsh:'):
+                        fimesh.handle_fimesh_packet(payload_str, message_from_id, rxNode)
+                        logger.debug(f"System: Handled FiMesh packet from UNKNOWN_APP: {payload_str[:50]}...")
+                except UnicodeDecodeError:
+                    pass  # Not a text packet
         else:
             # Evaluate non TEXT_MESSAGE_APP packets
             consumeMetadata(packet, rxNode)

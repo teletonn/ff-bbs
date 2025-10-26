@@ -105,16 +105,25 @@ def handle_manifest_packet(session_id, man_num_hex, is_last_flag, payload, from_
         if session_id not in active_downloads:
             # New download
             lines = manifest_data.split('\n')
-            file_name = lines[0]
-            file_size = int(lines[1])
-            active_downloads[session_id] = DownloadState(session_id, file_name, file_size, deviceID)
+            if len(lines) >= 2:
+                file_name = lines[0]
+                file_size = int(lines[1])
+                active_downloads[session_id] = DownloadState(session_id, file_name, file_size, deviceID)
 
-        download = active_downloads[session_id]
-        download.manifests.append((man_num, manifest_data))
+                # Create transfer record in database
+                from webui.db_handler import create_fimesh_transfer
+                try:
+                    create_fimesh_transfer(session_id, file_name, file_size, 0, 'download', from_node_id, str(deviceID))
+                except Exception as e:
+                    print(f"Error creating download transfer record: {e}")
 
-        if is_last_flag == '1':
-            # All manifests received, process
-            process_manifests(download)
+        if session_id in active_downloads:
+            download = active_downloads[session_id]
+            download.manifests.append((man_num, manifest_data))
+
+            if is_last_flag == '1':
+                # All manifests received, process
+                process_manifests(download)
     except Exception as e:
         print(f"Error handling manifest packet: {e}")
 
@@ -140,6 +149,13 @@ def handle_data_packet(session_id, packet_type, chunk_num_hex, payload, from_nod
                 upload.last_ack_time = time.time()
                 # AIMD: Additive increase
                 upload.window_size = min(upload.window_size + 1, upload.max_window_size)
+                # Update progress in database
+                from webui.db_handler import update_fimesh_transfer_status
+                try:
+                    progress = len(upload.acked_chunks) / len(upload.chunks) * 100 if upload.chunks else 0
+                    update_fimesh_transfer_status(session_id, progress=int(progress))
+                except Exception as e:
+                    print(f"Error updating transfer progress: {e}")
     except Exception as e:
         print(f"Error handling data packet: {e}")
 
@@ -166,6 +182,9 @@ def process_manifests(download):
 def send_ack_packet(session_id, chunk_num, deviceID):
     # Return ACK packet string
     packet = f"fmsh:{session_id}:ACK:{chunk_num:04x}:"
+    # Send the ACK packet immediately
+    from mesh_bot import send_message
+    send_message(packet, 0, 0, deviceID)  # Send to broadcast on the device
     return packet
 
 def check_for_outgoing_files():
@@ -196,6 +215,14 @@ def start_upload(file_path, session_id, device_id):
     upload = UploadState(session_id, file_path, file_size, device_id)
     upload.chunks = list(enumerate(chunks))
     active_uploads[session_id] = upload
+
+    # Create transfer record in database
+    from webui.db_handler import create_fimesh_transfer
+    try:
+        file_name = os.path.basename(file_path)
+        create_fimesh_transfer(session_id, file_name, file_size, len(chunks), 'upload', 'web', device_id)
+    except Exception as e:
+        print(f"Error creating transfer record: {e}")
 
     # Send manifests first
     packets.extend(send_manifests(upload))
@@ -319,6 +346,13 @@ def assemble_file(download):
     final_path = os.path.join(FIMESH_IN_DIR, download.file_name)
     os.rename(temp_path, final_path)
 
+    # Update transfer status to completed
+    from webui.db_handler import update_fimesh_transfer_status
+    try:
+        update_fimesh_transfer_status(download.session_id, 'completed')
+    except Exception as e:
+        print(f"Error updating transfer status to completed: {e}")
+
 def fail_upload(upload):
     # Rename file to ___failed
     file_name = os.path.basename(upload.file_path)
@@ -326,6 +360,13 @@ def fail_upload(upload):
     failed_path = os.path.join(FIMESH_OUT_DIR, failed_name)
     os.rename(upload.file_path, failed_path)
     upload.failed = True
+
+    # Update transfer status to failed
+    from webui.db_handler import update_fimesh_transfer_status
+    try:
+        update_fimesh_transfer_status(upload.session_id, 'failed')
+    except Exception as e:
+        print(f"Error updating transfer status to failed: {e}")
 
 def generate_session_id():
     return hashlib.md5(str(time.time()).encode()).hexdigest()[:8]

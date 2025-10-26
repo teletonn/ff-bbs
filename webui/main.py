@@ -30,7 +30,8 @@ from .db_handler import (
     get_processes, get_process, create_process, update_process, delete_process, update_process_run_count,
     get_zones, get_zone, create_zone, update_zone, delete_zone, get_active_zones, get_active_triggers,
     update_message_status, retry_message, delete_message_by_user, update_node_on_packet,
-    update_old_sent_messages_to_delivered, mark_sent_messages_as_undelivered
+    update_old_sent_messages_to_delivered, mark_sent_messages_as_undelivered,
+    get_fimesh_transfers, create_fimesh_transfer, update_fimesh_transfer_status
 )
 import sqlite3
 import json
@@ -1900,8 +1901,15 @@ async def api_upload_fimesh_file(file: UploadFile = File(...), node_id: str = Fo
         if not node_id.isdigit():
             raise HTTPException(status_code=400, detail="node_id must be numeric")
 
-        # Read file content
+        # Validate file size (max 1MB for FiMesh)
         file_content = await file.read()
+        if len(file_content) > 1024 * 1024:
+            raise HTTPException(status_code=400, detail="File too large (max 1MB)")
+
+        # Validate file type (basic check)
+        allowed_extensions = ['.txt', '.jpg', '.png', '.pdf', '.zip']
+        if not any(file.filename.lower().endswith(ext) for ext in allowed_extensions):
+            raise HTTPException(status_code=400, detail="Unsupported file type")
 
         # Create filename with node_id suffix
         name_parts = file.filename.rsplit('.', 1)
@@ -1918,7 +1926,18 @@ async def api_upload_fimesh_file(file: UploadFile = File(...), node_id: str = Fo
         with open(file_path, 'wb') as f:
             f.write(file_content)
 
-        return {"success": True, "filename": new_filename, "file_path": file_path, "size": len(file_content)}
+        # Create transfer record in database
+        transfer_id = create_fimesh_transfer({
+            'session_id': f"upload_{int(time.time())}_{node_id}",
+            'file_name': new_filename,
+            'file_size': len(file_content),
+            'from_node_id': 'web',  # Web upload
+            'to_node_id': node_id,
+            'status': 'pending',
+            'start_time': datetime.now().isoformat()
+        })
+
+        return {"success": True, "filename": new_filename, "file_path": file_path, "size": len(file_content), "transfer_id": transfer_id}
 
     except HTTPException:
         raise
