@@ -147,14 +147,13 @@ def handle_manifest_packet(session_id, man_num_hex, is_last_flag, payload, from_
 
 def handle_data_packet(session_id, packet_type, chunk_num_hex, payload, from_node_id, deviceID):
     try:
-        # Validate chunk_num_hex
-        if not chunk_num_hex or not chunk_num_hex.strip():
-            print(f"Error: invalid chunk_num_hex '{chunk_num_hex}' in data packet")
-            return
-
-        chunk_num = int(chunk_num_hex, 16)
-
         if packet_type == 'DAT':
+            # Validate chunk_num_hex for DAT packets
+            if not chunk_num_hex or not chunk_num_hex.strip():
+                print(f"Error: invalid chunk_num_hex '{chunk_num_hex}' in DAT packet")
+                return
+            chunk_num = int(chunk_num_hex, 16)
+
             # Validate payload
             if not payload or not payload.strip():
                 print(f"Error: empty payload in DAT packet")
@@ -170,6 +169,12 @@ def handle_data_packet(session_id, packet_type, chunk_num_hex, payload, from_nod
                 # Send ACK immediately when MAN packet is received
                 send_ack_packet(session_id, chunk_num, deviceID, from_node_id)
         elif packet_type == 'ACK':
+            # Validate chunk_num_hex for ACK packets
+            if not chunk_num_hex or not chunk_num_hex.strip():
+                print(f"Error: invalid chunk_num_hex '{chunk_num_hex}' in ACK packet")
+                return
+            chunk_num = int(chunk_num_hex, 16)
+
             # Acknowledgement
             if session_id in active_uploads:
                 upload = active_uploads[session_id]
@@ -421,10 +426,13 @@ def assemble_file(download):
 
 def fail_upload(upload):
     # Rename file to ___failed
-    file_name = os.path.basename(upload.file_path)
-    failed_name = file_name + '___failed'
-    failed_path = os.path.join(FIMESH_OUT_DIR, failed_name)
-    os.rename(upload.file_path, failed_path)
+    if os.path.exists(upload.file_path):
+        file_name = os.path.basename(upload.file_path)
+        failed_name = file_name + '___failed'
+        failed_path = os.path.join(FIMESH_OUT_DIR, failed_name)
+        os.rename(upload.file_path, failed_path)
+    else:
+        print(f"Warning: File {upload.file_path} not found during fail_upload")
     upload.failed = True
 
     # Update transfer status to failed
