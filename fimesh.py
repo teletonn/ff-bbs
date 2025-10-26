@@ -140,7 +140,7 @@ def handle_data_packet(session_id, packet_type, chunk_num_hex, payload, from_nod
                 download.received_chunks[chunk_num] = decompressed
                 download.last_packet_time = time.time()
                 # Send ACK
-                send_ack_packet(session_id, chunk_num, deviceID)
+                send_ack_packet(session_id, chunk_num, deviceID, from_node_id)
         elif packet_type == 'ACK':
             # Acknowledgement
             if session_id in active_uploads:
@@ -179,16 +179,13 @@ def process_manifests(download):
 
     download.chunk_hashes = chunk_hashes
 
-def send_ack_packet(session_id, chunk_num, deviceID):
-    # Return ACK packet string
+def send_ack_packet(session_id, chunk_num, deviceID, target_node_id):
+    # Send ACK packet as plain text message through normal message system
     packet = f"fmsh:{session_id}:ACK:{chunk_num:04x}:"
-    # Send the ACK packet as plain text message through normal message system
     from mesh_bot import send_message
-    send_message(packet, 0, 0, deviceID)  # Send to broadcast on the device
-    return packet
+    send_message(packet, 0, target_node_id, deviceID)  # Send to specific target node
 
 def check_for_outgoing_files():
-    packets = []
     for file_name in os.listdir(FIMESH_OUT_DIR):
         file_path = os.path.join(FIMESH_OUT_DIR, file_name)
         if os.path.isfile(file_path):
@@ -199,12 +196,11 @@ def check_for_outgoing_files():
                     base_name = parts[0]
                     node_id = parts[1].split('.')[0]  # Remove extension if present
                     session_id = generate_session_id()
-                    packets.extend(start_upload(file_path, session_id, node_id))
+                    start_upload(file_path, session_id, node_id)
             # If no node specified, skip
-    return packets
+    return []
 
 def start_upload(file_path, session_id, device_id):
-    packets = []
     with open(file_path, 'rb') as f:
         file_data = f.read()
 
@@ -212,6 +208,8 @@ def start_upload(file_path, session_id, device_id):
     compressed = zlib.compress(file_data)
     chunks = [compressed[i:i+140] for i in range(0, len(compressed), 140)]  # Chunk size
 
+    # Convert hex node ID to numeric
+    device_id = int(device_id, 16)
     upload = UploadState(session_id, file_path, file_size, device_id)
     upload.chunks = list(enumerate(chunks))
     active_uploads[session_id] = upload
@@ -225,11 +223,10 @@ def start_upload(file_path, session_id, device_id):
         print(f"Error creating transfer record: {e}")
 
     # Send manifests first
-    packets.extend(send_manifests(upload))
-    return packets
+    send_manifests(upload)
 
 def send_manifests(upload):
-    packets = []
+    from mesh_bot import send_message
     file_name = os.path.basename(upload.file_path)
     manifest_data = f"{file_name}\n{upload.file_size}\n"
     for chunk_num, chunk in upload.chunks:
@@ -243,13 +240,11 @@ def send_manifests(upload):
     man_packets = [encoded[i:i+140] for i in range(0, len(encoded), 140)]
     for i, packet in enumerate(man_packets):
         is_last = '1' if i == len(man_packets) - 1 else '0'
-        # Send MAN packet as plain text message
+        # Send MAN packet as plain text message to target node
         man_packet = f"fmsh:{upload.session_id}:MAN:{i:04x}:{is_last}:{packet}"
-        packets.append(man_packet)
-    return packets
+        send_message(man_packet, 0, upload.device_id, 1)  # Send to target node on device 1
 
 def periodic_fimesh_task():
-    packets = []
     current_time = time.time()
 
     # Handle uploads: send chunks, handle timeouts and retries
@@ -262,7 +257,7 @@ def periodic_fimesh_task():
             upload.retry_count += 1
             if upload.retry_count <= 10:
                 # Retransmit
-                packets.extend(retransmit_chunks(upload))
+                retransmit_chunks(upload)
                 upload.window_size = max(1, upload.window_size // 2)  # AIMD: Multiplicative decrease
             elif upload.retry_count <= 13:  # 10 + 3
                 # Pause for 2 minutes after 10 attempts
@@ -275,7 +270,7 @@ def periodic_fimesh_task():
                     continue
                 else:
                     # Retransmit after pause
-                    packets.extend(retransmit_chunks(upload))
+                    retransmit_chunks(upload)
                     upload.window_size = max(1, upload.window_size // 2)
             else:
                 fail_upload(upload)
@@ -283,7 +278,7 @@ def periodic_fimesh_task():
                 continue
         else:
             # Send next chunks within window
-            packets.extend(send_next_chunks(upload))
+            send_next_chunks(upload)
 
     # Handle downloads: check for completion, timeouts
     for session_id, download in list(active_downloads.items()):
@@ -295,32 +290,27 @@ def periodic_fimesh_task():
             assemble_file(download)
             del active_downloads[session_id]
 
-    return packets
+    return []
 
 def retransmit_chunks(upload):
-    packets = []
     # Retransmit unacked chunks
     for chunk_num in range(upload.next_chunk_to_send - upload.window_size, upload.next_chunk_to_send):
         if chunk_num not in upload.acked_chunks and chunk_num < len(upload.chunks):
-            packets.extend(send_chunk(upload, chunk_num))
-    return packets
+            send_chunk(upload, chunk_num)
 
 def send_next_chunks(upload):
-    packets = []
     while upload.next_chunk_to_send < len(upload.chunks) and (upload.next_chunk_to_send - len(upload.acked_chunks)) < upload.window_size:
-        packets.extend(send_chunk(upload, upload.next_chunk_to_send))
+        send_chunk(upload, upload.next_chunk_to_send)
         upload.next_chunk_to_send += 1
-    return packets
 
 def send_chunk(upload, chunk_num):
-    packets = []
+    from mesh_bot import send_message
     if chunk_num < len(upload.chunks):
         chunk_data = upload.chunks[chunk_num][1]
         encoded = base64.b64encode(chunk_data).decode('utf-8')
-        # Send DAT packet as plain text message
+        # Send DAT packet as plain text message to target node
         packet = f"fmsh:{upload.session_id}:DAT:{chunk_num:04x}:{encoded}"
-        packets.append(packet)
-    return packets
+        send_message(packet, 0, upload.device_id, 1)  # Send to target node on device 1
 
 def assemble_file(download):
     # Sort chunks and verify hashes

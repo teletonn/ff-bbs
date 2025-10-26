@@ -1525,6 +1525,12 @@ def onReceive(packet, interface):
             via_mqtt = packet['decoded'].get('viaMqtt', False)
             rx_time = packet['decoded'].get('rxTime', time.time())
 
+            # Intercept FiMesh packets early to prevent database logging and regular message processing
+            if message_string.startswith('fmsh:'):
+                fimesh.handle_fimesh_packet(message_string, message_from_id, rxNode)
+                logger.debug(f"System: FiMesh packet intercepted and handled, skipping regular message processing: {message_string[:50]}...")
+                return
+
             # Save incoming text message to database
             from_node_id = str(message_from_id)
             to_id = packet.get('to', 0)
@@ -2043,15 +2049,8 @@ async def start_rx():
     while True:
         await asyncio.sleep(0.5)
         # FiMesh periodic tasks
-        outgoing_packets = fimesh.check_for_outgoing_files()
-        if outgoing_packets:
-            for packet in outgoing_packets:
-                send_message(packet, 0, 0, 1)  # Send on channel 0, target 0, device 1
-
-        fimesh_packets = fimesh.periodic_fimesh_task()
-        if fimesh_packets:
-            for packet in fimesh_packets:
-                send_message(packet, 0, 0, 1)  # Send on channel 0, target 0, device 1
+        fimesh.check_for_outgoing_files()
+        fimesh.periodic_fimesh_task()
         pass
 
 # Hello World
