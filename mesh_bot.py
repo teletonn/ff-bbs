@@ -21,6 +21,7 @@ from datetime import datetime
 import math
 import sys
 import os
+import fimesh
 sys.path.append(os.path.join(os.path.dirname(__file__), 'webui'))
 try:
     from main import broadcast_map_update
@@ -171,6 +172,12 @@ cmdHistory = [] # list to hold the command history for lheard and history comman
 def auto_response(message, snr, rssi, hop, pkiStatus, message_from_id, channel_number, deviceID, isDM):
     global cmdHistory
     #Auto response to messages
+
+    # Intercept FiMesh packets
+    if message.startswith('fmsh:'):
+        fimesh.handle_fimesh_packet(message, message_from_id, deviceID)
+        return  # Do not respond to FiMesh packets
+
     message_lower = message.lower()
     bot_response = _("cant_do_that")
 
@@ -2023,6 +2030,16 @@ async def start_rx():
     # here we go loopty loo
     while True:
         await asyncio.sleep(0.5)
+        # FiMesh periodic tasks
+        outgoing_packets = fimesh.check_for_outgoing_files()
+        if outgoing_packets:
+            for packet in outgoing_packets:
+                send_message(packet, 0, 0, 1)  # Send on channel 0, target 0, device 1
+
+        fimesh_packets = fimesh.periodic_fimesh_task()
+        if fimesh_packets:
+            for packet in fimesh_packets:
+                send_message(packet, 0, 0, 1)  # Send on channel 0, target 0, device 1
         pass
 
 # Hello World
@@ -2130,6 +2147,9 @@ async def message_resend_task():
 
 async def main():
     load_geofences_and_triggers()
+
+    # Initialize FiMesh
+    fimesh.initialize_fimesh()
 
     # Initialize Telegram bot integration if enabled
     telegram_integration = None

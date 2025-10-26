@@ -333,11 +333,34 @@ def init_db():
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_node_zones_is_currently_in ON node_zones(is_currently_in)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_node_zones_last_seen ON node_zones(last_seen)')
 
+    # Таблица для FiMesh transfers
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS fimesh_transfers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT UNIQUE NOT NULL,
+        file_name TEXT NOT NULL,
+        file_size INTEGER,
+        total_chunks INTEGER,
+        direction TEXT NOT NULL CHECK (direction IN ('upload', 'download')),
+        from_node_id TEXT NOT NULL,
+        to_node_id TEXT NOT NULL,
+        status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'manifest', 'transferring', 'completed', 'failed', 'cancelled')),
+        progress INTEGER DEFAULT 0,
+        window_size INTEGER DEFAULT 2,
+        start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        end_time TIMESTAMP
+    )
+    ''')
+
     # Индексы для trigger_logs
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_trigger_logs_trigger_id ON trigger_logs(trigger_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_trigger_logs_node_id ON trigger_logs(node_id)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_trigger_logs_timestamp ON trigger_logs(timestamp)')
     cursor.execute('CREATE INDEX IF NOT EXISTS idx_trigger_logs_event_type ON trigger_logs(event_type)')
+
+    # Индексы для fimesh_transfers
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_fimesh_transfers_status ON fimesh_transfers(status)')
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_fimesh_transfers_start_time ON fimesh_transfers(start_time)')
 
     # Ensure users table has all columns
     cursor.execute("PRAGMA table_info(users)")

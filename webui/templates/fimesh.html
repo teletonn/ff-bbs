@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="fimesh-container">
+    <h2>FiMesh File Transfers</h2>
+
+    <!-- File Upload Form -->
+    <div class="upload-section">
+        <h3>Upload File</h3>
+        <form id="uploadForm" enctype="multipart/form-data">
+            <div class="form-group">
+                <label for="fileInput">Select File:</label>
+                <input type="file" id="fileInput" name="file" required>
+            </div>
+            <div class="form-group">
+                <label for="nodeIdInput">Target Node ID:</label>
+                <input type="text" id="nodeIdInput" name="node_id" placeholder="Enter node ID" required>
+            </div>
+            <button type="submit" class="btn btn-primary">Upload</button>
+        </form>
+    </div>
+
+    <!-- Active Transfers Table -->
+    <div class="transfers-section">
+        <h3>Active Transfers</h3>
+        <table id="activeTransfersTable" class="transfers-table">
+            <thead>
+                <tr>
+                    <th>File Name</th>
+                    <th>Direction</th>
+                    <th>Status</th>
+                    <th>Progress</th>
+                    <th>Window Size</th>
+                    <th>From/To Node</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Active transfers will be populated here -->
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Transfer History Table -->
+    <div class="history-section">
+        <h3>Transfer History</h3>
+        <table id="transferHistoryTable" class="transfers-table">
+            <thead>
+                <tr>
+                    <th>File Name</th>
+                    <th>Direction</th>
+                    <th>Status</th>
+                    <th>Progress</th>
+                    <th>Window Size</th>
+                    <th>From/To Node</th>
+                    <th>Timestamp</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Transfer history will be populated here -->
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script src="{{ url_for('static', path='/js/fimesh.js') }}"></script>
+{% endblock %}

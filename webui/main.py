@@ -1,5 +1,5 @@
 import uvicorn
-from fastapi import FastAPI, Request, Query, Path, HTTPException, Depends, Form, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, Query, Path, HTTPException, Depends, Form, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -160,6 +160,7 @@ menu_items = [
     ("Процессы", "/processes"),
     ("Бот", "/bot"),
     ("Конфиг Оповещений", "/alert_config"),
+    ("FiMesh", "/fimesh"),
     ("Настройки", "/settings"),
 ]
 
@@ -338,6 +339,11 @@ async def get_processes_page(request: Request, current_user: dict = Depends(logi
 async def get_zones_page(request: Request, current_user: dict = Depends(login_required)):
     """Отображает страницу гео-зон."""
     return render_template("zones.html", request, page_title="Гео-зоны")
+
+@app.get("/fimesh", response_class=HTMLResponse)
+async def get_fimesh_page(request: Request):
+    """Отображает страницу FiMesh."""
+    return render_template("fimesh.html", request, page_title="FiMesh")
 
 # WebSocket endpoint for real-time updates
 @app.websocket("/ws/map")
@@ -1868,6 +1874,91 @@ async def api_get_traceroute_status(trace_id: int):
         raise HTTPException(status_code=500, detail="Internal server error")
     finally:
         conn.close()
+
+# FiMesh API endpoints
+@app.get("/api/v1/fimesh/transfers")
+async def api_get_fimesh_transfers(limit: int = Query(20, ge=1, le=100), offset: int = Query(0, ge=0)):
+    """GET: Retrieve list of FiMesh transfers with pagination."""
+    try:
+        transfers = get_fimesh_transfers(limit, offset)
+        return transfers
+    except Exception as e:
+        logging.error(f"Error getting FiMesh transfers: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.post("/api/v1/fimesh/upload")
+async def api_upload_fimesh_file(file: UploadFile = File(...), node_id: str = Form(...)):
+    """POST: Upload a file for FiMesh transfer."""
+    try:
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="No file provided")
+
+        if not node_id:
+            raise HTTPException(status_code=400, detail="node_id is required")
+
+        # Validate node_id format (should be numeric)
+        if not node_id.isdigit():
+            raise HTTPException(status_code=400, detail="node_id must be numeric")
+
+        # Read file content
+        file_content = await file.read()
+
+        # Create filename with node_id suffix
+        name_parts = file.filename.rsplit('.', 1)
+        if len(name_parts) == 2:
+            new_filename = f"{name_parts[0]}___{node_id}.{name_parts[1]}"
+        else:
+            new_filename = f"{file.filename}___{node_id}"
+
+        # Ensure fimesh/out directory exists
+        os.makedirs('fimesh/out', exist_ok=True)
+
+        # Save file to fimesh/out/
+        file_path = os.path.join('fimesh/out', new_filename)
+        with open(file_path, 'wb') as f:
+            f.write(file_content)
+
+        return {"success": True, "filename": new_filename, "file_path": file_path, "size": len(file_content)}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error uploading FiMesh file: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.post("/api/v1/fimesh/transfers/{session_id}/cancel")
+async def api_cancel_fimesh_transfer(session_id: str):
+    """POST: Cancel a FiMesh transfer by session_id."""
+    try:
+        # Update transfer status to cancelled
+        success = update_fimesh_transfer_status(session_id, 'cancelled')
+        if not success:
+            raise HTTPException(status_code=404, detail="Transfer not found")
+
+        # Broadcast WebSocket update
+        try:
+            from .main import broadcast_map_update
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                asyncio.create_task(broadcast_map_update("fimesh_update", {
+                    "session_id": session_id,
+                    "status": "cancelled",
+                    "timestamp": datetime.now().isoformat()
+                }))
+            except RuntimeError:
+                # No running event loop, skip broadcasting
+                logger.debug("No running event loop, skipping WebSocket broadcast for FiMesh cancel")
+        except ImportError:
+            logger.debug("WebSocket broadcasting not available for FiMesh cancel")
+
+        return {"success": True, "message": f"Transfer {session_id} cancelled"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error cancelling FiMesh transfer: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 if __name__ == "__main__":

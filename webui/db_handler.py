@@ -1835,3 +1835,95 @@ def update_old_sent_messages_to_delivered():
         return updated_count
     finally:
         conn.close()
+
+# FiMesh transfer functions
+@retry_on_lock()
+def create_fimesh_transfer(session_id, file_name, file_size, total_chunks, direction, from_node_id, to_node_id):
+    """Create a new FiMesh transfer record."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO fimesh_transfers (session_id, file_name, file_size, total_chunks, direction, from_node_id, to_node_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (session_id, file_name, file_size, total_chunks, direction, from_node_id, to_node_id))
+        conn.commit()
+        return cursor.lastrowid
+    finally:
+        conn.close()
+
+@retry_on_lock()
+def update_fimesh_transfer_status(session_id, status, progress=None, window_size=None):
+    """Update the status and progress of a FiMesh transfer."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        updates = {'status': status}
+        if progress is not None:
+            updates['progress'] = progress
+        if window_size is not None:
+            updates['window_size'] = window_size
+
+        # Set end_time if status is completed, failed, or cancelled
+        if status in ('completed', 'failed', 'cancelled'):
+            updates['end_time'] = time.time()
+
+        set_parts = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values()) + [session_id]
+        query = f"UPDATE fimesh_transfers SET {set_parts} WHERE session_id = ?"
+        cursor.execute(query, values)
+        conn.commit()
+
+        # Broadcast WebSocket update for status changes
+        try:
+            from .main import broadcast_map_update
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                update_data = {"session_id": session_id, "status": status}
+                if progress is not None:
+                    update_data["progress"] = progress
+                if window_size is not None:
+                    update_data["window_size"] = window_size
+                asyncio.create_task(broadcast_map_update("fimesh_update", update_data))
+            except RuntimeError:
+                # No running event loop, skip broadcasting
+                logger.debug("No running event loop, skipping WebSocket broadcast for FiMesh update")
+        except ImportError:
+            logger.debug("WebSocket broadcasting not available for FiMesh update")
+
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+def get_fimesh_transfers(limit=50, offset=0):
+    """Get FiMesh transfers with pagination."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM fimesh_transfers
+            ORDER BY start_time DESC
+            LIMIT ? OFFSET ?
+        """, (limit, offset))
+        rows = cursor.fetchall()
+        columns = [description[0] for description in cursor.description]
+        return [dict(zip(columns, row)) for row in rows]
+    finally:
+        conn.close()
+
+def get_active_fimesh_transfers():
+    """Get active FiMesh transfers (not completed, failed, or cancelled)."""
+    conn = get_db_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM fimesh_transfers
+            WHERE status NOT IN ('completed', 'failed', 'cancelled')
+            ORDER BY start_time DESC
+        """)
+        rows = cursor.fetchall()
+        columns = [description[0] for description in cursor.description]
+        return [dict(zip(columns, row)) for row in rows]
+    finally:
+        conn.close()
