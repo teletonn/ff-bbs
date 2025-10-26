@@ -30,6 +30,13 @@ except ImportError:
     async def broadcast_map_update(update_type, data):
         pass
 
+# Initialize database schema
+try:
+    from webui.database import init_db
+    init_db()
+except Exception as e:
+    logger.error(f"Failed to initialize database: {e}")
+
 # --- Localization ---
 
 ACTIVE_GEOFENCES = []
