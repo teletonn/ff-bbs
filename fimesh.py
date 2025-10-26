@@ -182,7 +182,7 @@ def process_manifests(download):
 def send_ack_packet(session_id, chunk_num, deviceID):
     # Return ACK packet string
     packet = f"fmsh:{session_id}:ACK:{chunk_num:04x}:"
-    # Send the ACK packet immediately
+    # Send the ACK packet as plain text message through normal message system
     from mesh_bot import send_message
     send_message(packet, 0, 0, deviceID)  # Send to broadcast on the device
     return packet
@@ -243,7 +243,7 @@ def send_manifests(upload):
     man_packets = [encoded[i:i+140] for i in range(0, len(encoded), 140)]
     for i, packet in enumerate(man_packets):
         is_last = '1' if i == len(man_packets) - 1 else '0'
-        # Send MAN packet
+        # Send MAN packet as plain text message
         man_packet = f"fmsh:{upload.session_id}:MAN:{i:04x}:{is_last}:{packet}"
         packets.append(man_packet)
     return packets
@@ -317,7 +317,7 @@ def send_chunk(upload, chunk_num):
     if chunk_num < len(upload.chunks):
         chunk_data = upload.chunks[chunk_num][1]
         encoded = base64.b64encode(chunk_data).decode('utf-8')
-        # Send DAT packet
+        # Send DAT packet as plain text message
         packet = f"fmsh:{upload.session_id}:DAT:{chunk_num:04x}:{encoded}"
         packets.append(packet)
     return packets
