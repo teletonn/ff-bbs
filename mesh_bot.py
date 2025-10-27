@@ -21,7 +21,8 @@ from datetime import datetime
 import math
 import sys
 import os
-import fimesh
+from fimesh import FiMesh
+from webui.database import check_and_update_schema
 sys.path.append(os.path.join(os.path.dirname(__file__), 'webui'))
 try:
     from main import broadcast_map_update
@@ -32,8 +33,7 @@ except ImportError:
 
 # Initialize database schema
 try:
-    from webui.database import init_db
-    init_db()
+    check_and_update_schema()
 except Exception as e:
     logger.error(f"Failed to initialize database: {e}")
 
@@ -45,6 +45,8 @@ ACTIVE_ZONES = []  # New zones table
 NODE_ZONES = {}
 config = configparser.ConfigParser()
 config.read('config.ini')
+
+fimesh_instance = FiMesh(lambda msg, chan, node, dev: send_message(msg, chan, node, dev))
 
 # Commands configuration
 poll_interval = config.getint('commands', 'poll_interval', fallback=5)
@@ -182,7 +184,7 @@ def auto_response(message, snr, rssi, hop, pkiStatus, message_from_id, channel_n
 
     # Intercept FiMesh packets
     if message.startswith('fmsh:'):
-        fimesh.handle_fimesh_packet(message, message_from_id, deviceID)
+        fimesh_instance.handle_fimesh_packet(message, message_from_id, deviceID)
         # Do not respond to FiMesh packets, but continue processing for logging
         return
 
@@ -1367,7 +1369,6 @@ def check_and_execute_triggers(node_id, node_lat, node_lon):
         execute_triggers_for_zone(zone_id, node_id, 'enter')
     for zone_id in exited:
         execute_triggers_for_zone(zone_id, node_id, 'exit')
-    NODE_ZONES[node_id] = current_zones
 
 def check_and_play_game(tracker, message_from_id, message_string, rxNode, channel_number, game_name, handle_game_func):
     global llm_enabled
@@ -1535,7 +1536,7 @@ def onReceive(packet, interface):
             # Intercept FiMesh packets early to prevent database logging and regular message processing
             if message_string.startswith('fmsh:'):
                 logger.info(f"System: Intercepted FiMesh packet: {message_string[:50]}...")
-                fimesh.handle_fimesh_packet(message_string, message_from_id, rxNode)
+                fimesh_instance.handle_fimesh_packet(message_string, message_from_id, rxNode)
                 logger.debug(f"System: FiMesh packet handled, skipping regular message processing")
                 return
 
@@ -1799,7 +1800,7 @@ def onReceive(packet, interface):
                     payload_str = payload_bytes.decode('utf-8')
                     if payload_str.startswith('fmsh:'):
                         logger.info(f"System: Intercepted FiMesh packet from UNKNOWN_APP: {payload_str[:50]}...")
-                        fimesh.handle_fimesh_packet(payload_str, message_from_id, rxNode)
+                        fimesh_instance.handle_fimesh_packet(payload_str, message_from_id, rxNode)
                         logger.debug(f"System: FiMesh packet from UNKNOWN_APP handled")
                 except UnicodeDecodeError:
                     pass  # Not a text packet
@@ -2058,8 +2059,8 @@ async def start_rx():
     while True:
         await asyncio.sleep(0.5)
         # FiMesh periodic tasks
-        fimesh.check_for_outgoing_files()
-        fimesh.periodic_fimesh_task()
+        fimesh_instance.check_for_outgoing_files()
+        fimesh_instance.periodic_fimesh_task()
         pass
 
 # Hello World
@@ -2167,9 +2168,6 @@ async def message_resend_task():
 
 async def main():
     load_geofences_and_triggers()
-
-    # Initialize FiMesh
-    fimesh.initialize_fimesh()
 
     # Initialize Telegram bot integration if enabled
     telegram_integration = None
