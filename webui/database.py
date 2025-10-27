@@ -3,11 +3,66 @@ import sqlite3
 def init_db():
     """Инициализирует базу данных и создает таблицы, если они еще не существуют."""
     conn = sqlite3.connect('dashboard.db')
+    init_db_on_connection(conn)
+    conn.close()
+
+def check_and_update_schema():
+    """Checks the database schema and applies missing tables or columns."""
+    # This is a simplified migration helper. For complex migrations, a full tool like Alembic would be better.
+
+    # Get the full schema from init_db by creating a temporary in-memory DB
+    mem_conn = sqlite3.connect(':memory:')
+    init_db_on_connection(mem_conn)
+
+    # Get the list of tables and their columns from the ideal schema
+    mem_cursor = mem_conn.cursor()
+    mem_cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    ideal_tables = {row[0] for row in mem_cursor.fetchall()}
+
+    ideal_schema = {}
+    for table in ideal_tables:
+        mem_cursor.execute(f"PRAGMA table_info({table})")
+        ideal_schema[table] = {row[1]: row[2] for row in mem_cursor.fetchall()} # name: type
+    mem_conn.close()
+
+    # Now connect to the real database and check against the ideal schema
+    conn = sqlite3.connect('dashboard.db')
     cursor = conn.cursor()
 
-    # Enable WAL mode for concurrent readers and writers
-    cursor.execute('PRAGMA journal_mode=WAL;')
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    current_tables = {row[0] for row in cursor.fetchall()}
 
+    # Create missing tables
+    missing_tables = ideal_tables - current_tables
+    if missing_tables:
+        # Re-run init_db to create missing tables (it uses CREATE IF NOT EXISTS)
+        init_db_on_connection(conn)
+        print(f"Created missing tables: {', '.join(missing_tables)}")
+
+    # Check for and add missing columns
+    for table in ideal_tables:
+        if table in current_tables:
+            cursor.execute(f"PRAGMA table_info({table})")
+            current_columns = {row[1] for row in cursor.fetchall()}
+            ideal_columns = ideal_schema[table]
+
+            missing_columns = set(ideal_columns.keys()) - current_columns
+            for col in missing_columns:
+                col_type = ideal_columns[col]
+                # Simplified ALTER TABLE, no constraints or defaults for now
+                try:
+                    cursor.execute(f'ALTER TABLE {table} ADD COLUMN {col} {col_type}')
+                    print(f"Added column '{col}' to table '{table}'")
+                except sqlite3.OperationalError as e:
+                    print(f"Could not add column '{col}' to '{table}': {e}")
+
+    conn.commit()
+    conn.close()
+
+def init_db_on_connection(conn):
+    """Initializes the database schema on a given connection."""
+    cursor = conn.cursor()
+    cursor.execute('PRAGMA journal_mode=WAL;')
     # Таблица для узлов сети (Nodes)
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS nodes (
@@ -470,13 +525,9 @@ def init_db():
                       ('messaging.undelivered_timeout_minutes', '10', 'Timeout in minutes after which sent messages are marked as undelivered'))
 
     conn.commit()
-    conn.close()
 
-    # Ensure WAL mode on all databases
-    # from .db_handler import ensure_wal_mode_on_all_dbs
-    # ensure_wal_mode_on_all_dbs()
 
 if __name__ == '__main__':
-    print("Инициализация базы данных...")
-    init_db()
-    print("База данных успешно инициализирована.")
+    print("Checking and updating database schema...")
+    check_and_update_schema()
+    print("Database is up to date.")
