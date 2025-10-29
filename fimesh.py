@@ -26,7 +26,7 @@ class UploadState:
         self.chunks = []  # List of (chunk_num, chunk_data)
         self.sent_chunks = set()
         self.acked_chunks = set()
-        self.window_size = 2
+        self.window_size = 1
         self.next_chunk_to_send = 0
         self.last_ack_time = time.time()
         self.start_time = time.time()  # Track total transfer time
@@ -50,7 +50,7 @@ class DownloadState:
         self.device_id = device_id
         self.received_chunks = {}  # chunk_num -> chunk_data
         self.expected_chunks = set()
-        self.window_size = 2
+        self.window_size = 1
         self.next_expected_chunk = 0
         self.last_packet_time = time.time()
         self.start_time = time.time()  # Track total transfer time

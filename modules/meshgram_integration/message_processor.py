@@ -58,7 +58,7 @@ class MessageProcessor:
         self.message_id_map: dict[int, str] = {}
         self.reverse_message_id_map: dict[str, int] = {}
         self.pending_acks: dict[int, PendingAck] = {}
-        self.ack_timeout: int = 30  # seconds
+        self.ack_timeout: int = 90  # seconds
         self.bell_rate_limit: dict[int, datetime] = {}  # Track bell command usage per user
         self.bell_cooldown_seconds: int = 120  # 2 minutes cooldown for non-authorized users
 

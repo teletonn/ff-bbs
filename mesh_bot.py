@@ -1494,7 +1494,7 @@ def onReceive(packet, interface):
     for node in seenNodes:
         if node['nodeID'] == message_from_id:
             node['lastSeen'] = time.time()
-            # Update last_seen in database
+            # Update last_seen in database for all packet types
             try:
                 db_handler.update_node_last_seen(message_from_id)
                 # Broadcast node activity update
@@ -1774,6 +1774,12 @@ def onReceive(packet, interface):
                                     send_message(f"Hello {name} {qrz_hello_string}", channel_number, message_from_id, rxNode)
                                     time.sleep(responseDelay)
         elif 'decoded' in packet and packet['decoded']['portnum'] == 'ROUTING_APP':
+            # Update node online status for ROUTING_APP packets
+            try:
+                db_handler.update_node_last_seen(message_from_id)
+            except Exception as e:
+                logger.error(f"System: Failed to update last_seen for ROUTING_APP from node {message_from_id}: {e}")
+
             # Handle ACK packets for message delivery confirmation
             routing = packet['decoded'].get('routing', {})
             if routing.get('errorReason') == 'NONE':
@@ -1792,6 +1798,12 @@ def onReceive(packet, interface):
                     except Exception as e:
                         logger.error(f"System: Failed to update message delivery status for ACK {request_id}: {e}")
         elif 'decoded' in packet and packet['decoded']['portnum'] == 'UNKNOWN_APP':
+            # Update node online status for UNKNOWN_APP packets (may include FiMesh)
+            try:
+                db_handler.update_node_last_seen(message_from_id)
+            except Exception as e:
+                logger.error(f"System: Failed to update last_seen for UNKNOWN_APP from node {message_from_id}: {e}")
+
             # Handle FiMesh packets that come through as UNKNOWN_APP
             if 'payload' in packet['decoded']:
                 payload_bytes = packet['decoded']['payload']
@@ -1804,6 +1816,12 @@ def onReceive(packet, interface):
                 except UnicodeDecodeError:
                     pass  # Not a text packet
         else:
+            # Update node online status for any other packet types
+            try:
+                db_handler.update_node_last_seen(message_from_id)
+            except Exception as e:
+                logger.error(f"System: Failed to update last_seen for unknown packet type from node {message_from_id}: {e}")
+
             # Evaluate non TEXT_MESSAGE_APP packets
             consumeMetadata(packet, rxNode)
             # Check for position packets
@@ -1819,7 +1837,6 @@ def onReceive(packet, interface):
                     ground_speed = pos.get('groundSpeed')
                     precision_bits = pos.get('precisionBits')
                     try:
-                        db_handler.update_node_last_seen(message_from_id)
                         db_handler.update_node(message_from_id, name=name, battery_level=battery, latitude=lat, longitude=lon, altitude=altitude)
                         # Update telemetry data
                         db_handler.update_node_telemetry(

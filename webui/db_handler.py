@@ -74,8 +74,8 @@ def add_node(node_id, name, last_seen, battery_level, latitude, longitude, altit
     conn = get_db_connection()
     try:
         conn.execute(
-            "INSERT OR REPLACE INTO nodes (node_id, name, last_seen, battery_level, latitude, longitude, altitude) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (node_id, name, last_seen, battery_level, latitude, longitude, altitude)
+            "INSERT OR REPLACE INTO nodes (node_id, name, last_seen, battery_level, latitude, longitude, altitude, last_activity) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (node_id, name, last_seen, battery_level, latitude, longitude, altitude, last_seen)
         )
         conn.commit()
     finally:
@@ -104,7 +104,8 @@ def update_node_last_seen(node_id):
     """Update node's last seen time and mark as online."""
     conn = get_db_connection()
     try:
-        conn.execute("UPDATE nodes SET last_seen = ?, is_online = 1 WHERE node_id = ?", (time.time(), node_id))
+        current_time = time.time()
+        conn.execute("UPDATE nodes SET last_seen = ?, last_activity = ?, is_online = 1 WHERE node_id = ?", (current_time, current_time, node_id))
         conn.commit()
     finally:
         conn.close()
@@ -119,7 +120,9 @@ def update_node_telemetry(node_id, telemetry_dict=None, **kwargs):
         updates.update(kwargs)
 
         # Always mark node as online and update last_telemetry when telemetry is received
-        updates['last_telemetry'] = time.time()
+        current_time = time.time()
+        updates['last_telemetry'] = current_time
+        updates['last_activity'] = current_time
         updates['is_online'] = 1
         update_node(node_id, **updates)
 
@@ -135,44 +138,34 @@ def check_and_update_offline_nodes():
     try:
         cursor = conn.cursor()
         # Get configurable timeout from settings (default 30 minutes = 1800 seconds)
-        timeout_minutes = get_setting('node.inactivity_timeout_minutes', 30)
+        timeout_minutes_raw = get_setting('node.inactivity_timeout_minutes', 30)
+        try:
+            timeout_minutes = int(timeout_minutes_raw)
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Invalid timeout_minutes setting '{timeout_minutes_raw}', using default 30: {e}")
+            timeout_minutes = 30
         threshold = time.time() - (timeout_minutes * 60)
 
         # Debug: Log nodes that would be set offline
         cursor.execute("""
-            SELECT n.node_id, n.last_telemetry, n.last_seen, m.latest_message,
-                    COALESCE(MAX(COALESCE(n.last_telemetry, 0), COALESCE(n.last_seen, 0), COALESCE(m.latest_message, 0)), 0) as max_timestamp
+            SELECT n.node_id, n.last_activity
             FROM nodes n
-            LEFT JOIN (
-                SELECT from_node_id, MAX(timestamp) as latest_message
-                FROM messages
-                GROUP BY from_node_id
-            ) m ON n.node_id = m.from_node_id
-            WHERE COALESCE(MAX(COALESCE(n.last_telemetry, 0), COALESCE(n.last_seen, 0), COALESCE(m.latest_message, 0)), 0) < ?
+            WHERE n.last_activity < ?
             AND n.is_online = 1
         """, (threshold,))
         debug_rows = cursor.fetchall()
         if debug_rows:
             logger.info(f"Debug: {len(debug_rows)} nodes to be set offline (timeout: {timeout_minutes} minutes)")
             for row in debug_rows[:5]:  # Log first 5 for brevity
-                logger.info(f"Debug: Node {row[0]} - last_telemetry={row[1]}, last_seen={row[2]}, latest_message={row[3]}, max={row[4]}, threshold={threshold}")
+                logger.info(f"Debug: Node {row[0]} - last_activity={row[1]}, threshold={threshold}")
 
-        # Find nodes that haven't been active in the last 5 minutes
-        # Check both last_telemetry and the latest message timestamp for each node
+        # Find nodes that haven't been active in the last configured timeout
+        # Use unified last_activity field which is updated for all packet types
         cursor.execute("""
             UPDATE nodes
             SET is_online = 0
-            WHERE node_id IN (
-                SELECT n.node_id
-                FROM nodes n
-                LEFT JOIN (
-                    SELECT from_node_id, MAX(timestamp) as latest_message
-                    FROM messages
-                    GROUP BY from_node_id
-                ) m ON n.node_id = m.from_node_id
-                WHERE COALESCE(MAX(COALESCE(n.last_telemetry, 0), COALESCE(n.last_seen, 0), COALESCE(m.latest_message, 0)), 0) < ?
-                AND n.is_online = 1
-            )
+            WHERE last_activity < ?
+            AND is_online = 1
         """, (threshold,))
 
         updated_count = cursor.rowcount
@@ -181,7 +174,7 @@ def check_and_update_offline_nodes():
 
             # Get nodes that were just set offline for broadcasting
             cursor.execute("""
-                SELECT node_id FROM nodes WHERE is_online = 0 AND last_seen < ?
+                SELECT node_id FROM nodes WHERE is_online = 0 AND last_activity < ?
             """, (threshold,))
             offline_nodes = [row[0] for row in cursor.fetchall()]
             if offline_nodes:
@@ -237,7 +230,7 @@ def save_message(from_node_id, to_node_id, channel, text, timestamp, is_dm, stat
         conn.commit()
 
         # Update node online status and check for inactive nodes
-        update_node(from_node_id, is_online=True, last_seen=timestamp)
+        update_node(from_node_id, is_online=True, last_seen=timestamp, last_activity=timestamp)
         check_and_update_offline_nodes()
 
         return cursor.lastrowid
@@ -1751,6 +1744,10 @@ def update_node_on_packet(node_id, packet_data):
     conn = get_db_connection()
     try:
         updates = {}
+        current_time = time.time()
+        updates['last_activity'] = current_time  # Update activity timestamp for all packet types
+        updates['is_online'] = 1  # Mark node as online
+
         if 'snr' in packet_data:
             updates['snr'] = packet_data['snr']
         if 'rssi' in packet_data:
