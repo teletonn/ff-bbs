@@ -475,14 +475,26 @@ def get_node_location(nodeID, nodeInt=1, channel=0):
 
 
 def is_node_online(node_id, nodeInt=1, use_ping=False):
-    """Check if a node is online based on last heard time (within 2 hours) and optionally ping."""
-    interface = globals()[f'interface{nodeInt}']
+    """Check if a node is online based on database is_online field and last_activity timestamp (within 30 minutes) and optionally ping."""
+    # First check database status
+    try:
+        node = get_node_by_id(str(node_id))
+        if node and node.get('is_online') == 1:
+            last_activity = node.get('last_activity', 0)
+            # Get configurable timeout (default 30 minutes)
+            timeout_seconds = node_inactivity_timeout_minutes * 60
+            if last_activity and (time.time() - last_activity) <= timeout_seconds:
+                return True
+    except Exception as e:
+        logger.debug(f"System: Database check failed for node {node_id}: {e}")
 
+    # Fallback to interface check if database unavailable or node not online
+    interface = globals()[f'interface{nodeInt}']
     if interface.nodes:
         for node in interface.nodes.values():
             if node['num'] == node_id:
                 last_heard = node.get('lastHeard', 0)
-                # Check if last heard within 2 hours (7200 seconds)
+                # Check if last heard within 30 minutes (1800 seconds)
                 if last_heard and (time.time() - last_heard) <= 1800:
                     return True
                 elif use_ping:

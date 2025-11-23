@@ -16,7 +16,7 @@ msg_history = [] # message history for the store and forward feature
 bbs_ban_list = [] # list of banned users, imported from config
 bbs_admin_list = [] # list of admin users, imported from config
 repeater_channels = [] # list of channels to listen on for repeater mode, imported from config
-antiSpam = True # anti-spam feature to prevent flooding public channel
+antiSpam = False # anti-spam feature to prevent flooding public channel
 ping_enabled = True # ping feature to respond to pings, ack's etc.
 sitrep_enabled = True # sitrep feature to respond to sitreps
 lastHamLibAlert = 0 # last alert from hamlib
@@ -99,6 +99,10 @@ if 'checklist' not in config:
 
 if 'qrz' not in config:
     config['qrz'] = {'enabled': 'False', 'qrz_db': 'data/qrz.db', 'qrz_hello_string': 'send CMD or DM me for more info.'}
+    config.write(open(config_file, 'w'))
+
+if 'node' not in config:
+    config['node'] = {'inactivity_timeout_minutes': '30'}
     config.write(open(config_file, 'w'))
 
 # interface1 settings
@@ -309,6 +313,9 @@ try:
     qrz_db = config['qrz'].get('qrz_db', 'data/qrz.db')
     qrz_hello_string = config['qrz'].get('qrz_hello_string', 'MeshBot says Hello! DM for more info.')
     train_qrz = config['qrz'].getboolean('training', True)
+
+    # node settings
+    node_inactivity_timeout_minutes = config['node'].getint('inactivity_timeout_minutes', 30)
     
     # E-Mail Settings
     sysopEmails = config['smtp'].get('sysopEmails', '').split(',')
